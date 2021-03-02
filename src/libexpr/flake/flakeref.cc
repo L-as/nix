@@ -66,7 +66,7 @@ std::optional<FlakeRef> maybeParseFlakeRef(
     }
 }
 
-std::pair<FlakeRef, std::string> parseFlakeRefWithFragment(
+static std::pair<FlakeRef, std::string> parseFlakeRefWithFragment_(
     const std::string & url, const std::optional<Path> & baseDir, bool allowMissing)
 {
     using namespace fetchers;
@@ -178,6 +178,18 @@ std::pair<FlakeRef, std::string> parseFlakeRefWithFragment(
     }
 }
 
+std::pair<FlakeRef, std::string> parseFlakeRefWithFragment(
+    const std::string & url, const std::optional<Path> & baseDir, bool allowMissing)
+{
+    auto [flakeref, fragment] = parseFlakeRefWithFragment_(url, baseDir, allowMissing);
+    auto attrs = flakeref.input.toAttrs();
+    if (fetchers::maybeGetStrAttr(attrs, "type") == "git") {
+        attrs.insert_or_assign("submodules", Explicit<bool> {true});
+        flakeref.input = fetchers::Input::fromAttrs(std::move(attrs));
+    }
+    return std::make_pair(flakeref, fragment);
+}
+
 std::optional<std::pair<FlakeRef, std::string>> maybeParseFlakeRefWithFragment(
     const std::string & url, const std::optional<Path> & baseDir)
 {
@@ -192,6 +204,9 @@ FlakeRef FlakeRef::fromAttrs(const fetchers::Attrs & attrs)
 {
     auto attrs2(attrs);
     attrs2.erase("dir");
+    if (fetchers::maybeGetStrAttr(attrs2, "type") == "git") {
+        attrs2.insert_or_assign("submodules", Explicit<bool> {true});
+    }
     return FlakeRef(
         fetchers::Input::fromAttrs(std::move(attrs2)),
         fetchers::maybeGetStrAttr(attrs, "dir").value_or(""));
