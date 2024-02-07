@@ -44,6 +44,7 @@
       stdenvs = [
         "ccacheStdenv"
         "clangStdenv"
+        "clang16Stdenv"
         "gccStdenv"
         "libcxxStdenv"
         "stdenv"
