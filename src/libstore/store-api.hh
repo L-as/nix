@@ -45,7 +45,7 @@ namespace nix {
  *   implementation of the store.
  *
  *   This class is expected to have a constructor `Foo(const Params & params)`
- *   that calls `StoreConfig(params)` (otherwise you're gonna encounter an
+ *   that calls `StoreConfig(params)` (otherwise you will encounter an
  *   `assertion failure` when trying to instantiate it).
  *
  * You can then register the new store using:
@@ -449,7 +449,7 @@ public:
 
     /**
      * Copy the contents of a path to the store and register the
-     * validity the resulting path, using a constant amount of
+     * validity of the resulting path, using a constant amount of
      * memory.
      */
     ValidPathInfo addToStoreSlow(

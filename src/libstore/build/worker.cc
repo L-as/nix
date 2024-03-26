@@ -2,9 +2,10 @@
 #include "worker.hh"
 #include "substitution-goal.hh"
 #include "drv-output-substitution-goal.hh"
-#include "local-derivation-goal.hh"
 #include "hook-instance.hh"
 #include "signals.hh"
+#include "derivation-goal.hh"
+#include "local-store.hh"
 
 #include <poll.h>
 
@@ -64,9 +65,7 @@ std::shared_ptr<DerivationGoal> Worker::makeDerivationGoal(const StorePath & drv
     const OutputsSpec & wantedOutputs, BuildMode buildMode)
 {
     return makeDerivationGoalCommon(drvPath, wantedOutputs, [&]() -> std::shared_ptr<DerivationGoal> {
-        return !dynamic_cast<LocalStore *>(&store)
-            ? std::make_shared</* */DerivationGoal>(drvPath, wantedOutputs, *this, buildMode)
-            : std::make_shared<LocalDerivationGoal>(drvPath, wantedOutputs, *this, buildMode);
+        return std::make_shared<DerivationGoal>(drvPath, wantedOutputs, *this, buildMode);
     });
 }
 
@@ -75,9 +74,7 @@ std::shared_ptr<DerivationGoal> Worker::makeBasicDerivationGoal(const StorePath 
     const BasicDerivation & drv, const OutputsSpec & wantedOutputs, BuildMode buildMode)
 {
     return makeDerivationGoalCommon(drvPath, wantedOutputs, [&]() -> std::shared_ptr<DerivationGoal> {
-        return !dynamic_cast<LocalStore *>(&store)
-            ? std::make_shared</* */DerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode)
-            : std::make_shared<LocalDerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode);
+        return std::make_shared<DerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode);
     });
 }
 
@@ -215,6 +212,7 @@ void Worker::childStarted(GoalPtr goal, const std::set<int> & fds,
 
 void Worker::childTerminated(Goal * goal, bool wakeSleepers)
 {
+    debug("childTerminated called");
     auto i = std::find_if(children.begin(), children.end(),
         [&](const Child & child) { return child.goal2 == goal; });
     if (i == children.end()) return;
@@ -234,6 +232,7 @@ void Worker::childTerminated(Goal * goal, bool wakeSleepers)
         }
     }
 
+    debug("erased child %s", goal);
     children.erase(i);
 
     if (wakeSleepers) {
@@ -328,6 +327,7 @@ void Worker::run(const Goals & _topGoals)
         if (!children.empty() || !waitingForAWhile.empty())
             waitForInput();
         else {
+            debug("no children");
             if (awake.empty() && 0U == settings.maxBuildJobs)
             {
                 if (getMachines().empty())
@@ -350,6 +350,7 @@ void Worker::run(const Goals & _topGoals)
                     );
 
             }
+            debug("length: %i", topGoals.size());
             assert(!awake.empty());
         }
     }
@@ -364,7 +365,7 @@ void Worker::run(const Goals & _topGoals)
 
 void Worker::waitForInput()
 {
-    printMsg(lvlVomit, "waiting for children");
+    vomit("waiting for children");
 
     /* Process output from the file descriptors attached to the
        children, namely log output and output path creation commands.
@@ -420,11 +421,13 @@ void Worker::waitForInput()
         }
     }
 
+    debug("calling poll");
     if (poll(pollStatus.data(), pollStatus.size(),
             useTimeout ? timeout * 1000 : -1) == -1) {
         if (errno == EINTR) return;
         throw SysError("waiting for input");
     }
+    debug("poll done");
 
     auto after = steady_time_point::clock::now();
 
@@ -432,6 +435,7 @@ void Worker::waitForInput()
        O(children * fds). */
     decltype(children)::iterator i;
     for (auto j = children.begin(); j != children.end(); j = i) {
+        debug("processing goal");
         i = std::next(j);
 
         checkInterrupt();
@@ -442,6 +446,7 @@ void Worker::waitForInput()
         std::set<int> fds2(j->fds);
         std::vector<unsigned char> buffer(4096);
         for (auto & k : fds2) {
+            debug("processing fd");
             const auto fdPollStatusId = get(fdToPollStatus, k);
             assert(fdPollStatusId);
             assert(*fdPollStatusId < pollStatus.size());
@@ -450,7 +455,7 @@ void Worker::waitForInput()
                 // FIXME: is there a cleaner way to handle pt close
                 // than EIO? Is this even standard?
                 if (rd == 0 || (rd == -1 && errno == EIO)) {
-                    debug("%1%: got EOF", goal->getName());
+                    goal->trace("got EOF");
                     goal->handleEOF(k);
                     j->fds.erase(k);
                 } else if (rd == -1) {

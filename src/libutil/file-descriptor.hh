@@ -20,7 +20,17 @@ std::string readFile(int fd);
  */
 void readFull(int fd, char * buf, size_t count);
 
+/**
+ * Like readFull, except it starts reading from an explicit offset.
+ */
+void readFullAt(int fd, char * buf, size_t count, off_t offset);
+
 void writeFull(int fd, std::string_view s, bool allowInterrupts = true);
+
+/**
+ * Like writeFull, except it starts writing from an explicit offset.
+ */
+void writeFullAt(int fd, std::string_view s, off_t offset, bool allowInterrupts = true);
 
 /**
  * Read a line from a file descriptor.

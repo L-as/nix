@@ -226,7 +226,9 @@ extern Verbosity verbosity;
     do { \
         auto __lvl = level; \
         if (__lvl <= nix::verbosity) { \
-            loggerParam->log(__lvl, fmt(args)); \
+            std::string __msg = fmt(args);                          \
+            std::string __msg_ = fmt("%s:%s:%d:%s", __builtin_FILE(), __builtin_FUNCTION(), __builtin_LINE(), __msg);                          \
+            loggerParam->log(__lvl, __msg_); \
         } \
     } while (0)
 #define printMsg(level, args...) printMsgUsing(logger, level, args)

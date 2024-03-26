@@ -290,6 +290,13 @@ public:
 
     std::optional<std::string> getVersion() override;
 
+    /**
+     * Add signatures to a ValidPathInfo or Realisation using the secret keys
+     * specified by the ‘secret-key-files’ option.
+     */
+    void signPathInfo(ValidPathInfo & info);
+    void signRealisation(Realisation &);
+
 private:
 
     /**
@@ -343,16 +350,8 @@ private:
     bool isValidPath_(State & state, const StorePath & path);
     void queryReferrers(State & state, const StorePath & path, StorePathSet & referrers);
 
-    /**
-     * Add signatures to a ValidPathInfo or Realisation using the secret keys
-     * specified by the ‘secret-key-files’ option.
-     */
-    void signPathInfo(ValidPathInfo & info);
-    void signRealisation(Realisation &);
-
     void addBuildLog(const StorePath & drvPath, std::string_view log) override;
 
-    friend struct LocalDerivationGoal;
     friend struct PathSubstitutionGoal;
     friend struct SubstitutionGoal;
     friend struct DerivationGoal;

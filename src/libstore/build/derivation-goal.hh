@@ -7,14 +7,13 @@
 #include "store-api.hh"
 #include "pathlocks.hh"
 #include "goal.hh"
+#include "builder-interface.hh"
 
 namespace nix {
 
 using std::map;
 
 struct HookInstance;
-
-typedef enum {rpAccept, rpDecline, rpPostpone} HookReply;
 
 /**
  * Unless we are repairing, we don't both to test validity and just assume it,
@@ -50,28 +49,105 @@ struct InitialOutput {
     std::optional<InitialOutputStatus> known;
 };
 
+// FIXME: hide all implementation details
 /**
  * A goal for building some or all of the outputs of a derivation.
  */
-struct DerivationGoal : public Goal
+struct DerivationGoal final : public Goal
 {
+    public:
+
+    /**
+     * The sort of derivation we are building.
+     */
+    std::optional<DerivationType> derivationType;
+
+    /**
+     * The derivation stored at drvPath.
+     */
+    std::unique_ptr<Derivation> drv;
+
+    std::unique_ptr<ParsedDerivation> parsedDrv;
+
     /**
      * Whether to use an on-disk .drv file.
      */
     bool useDerivation;
 
+    /* Write to log */
+    void writeToLog(std::string_view data);
+
+    /* Write to log directly */
+    std::shared_ptr<BufferedSink> logSink;
+
     /** The path of the derivation. */
     StorePath drvPath;
+
+    /**
+     * The specific outputs that we need to build.
+     * Accessed by worker.
+     */
+    OutputsSpec wantedOutputs;
+
+
+    /**
+     * Add wanted outputs to an already existing derivation goal.
+     * Used by worker.
+     */
+    void addWantedOutputs(const OutputsSpec & outputs);
+
+    /**
+     * Aborts if any output is not valid or corrupt, and otherwise
+     * returns a 'SingleDrvOutputs' structure containing all outputs.
+     */
+    SingleDrvOutputs assertPathValidity();
+
+    /**
+     * All input paths (that is, the union of FS closures of the
+     * immediate input paths).
+     */
+    StorePathSet inputPaths;
+
+    /**
+     * Activity that denotes waiting for a lock.
+     */
+    std::unique_ptr<Activity> actLock;
+
+    void done(
+        BuildResult::Status status,
+        SingleDrvOutputs builtOutputs = {},
+        std::optional<Error> ex = {});
+
+    /**
+     * The remote machine on which we're building.
+     */
+    std::string machineName;
+
+    std::map<std::string, InitialOutput> initialOutputs;
+
+    BuildMode buildMode;
+
+    /**
+     * Sign the newly built realisation if the store allows it
+     */
+    void signRealisation(Realisation&);
+
+    DerivationGoal(const StorePath & drvPath,
+        const OutputsSpec & wantedOutputs, Worker & worker,
+        BuildMode buildMode = bmNormal);
+    DerivationGoal(const StorePath & drvPath, const BasicDerivation & drv,
+        const OutputsSpec & wantedOutputs, Worker & worker,
+        BuildMode buildMode = bmNormal);
+    ~DerivationGoal();
+
+    private:
+
+    void started();
 
     /**
      * The goal for the corresponding resolved derivation
      */
     std::shared_ptr<DerivationGoal> resolvedDrvGoal;
-
-    /**
-     * The specific outputs that we need to build.
-     */
-    OutputsSpec wantedOutputs;
 
     /**
      * Mapping from input derivations + output names to actual store
@@ -134,13 +210,6 @@ struct DerivationGoal : public Goal
     RetrySubstitution retrySubstitution = RetrySubstitution::NoNeed;
 
     /**
-     * The derivation stored at drvPath.
-     */
-    std::unique_ptr<Derivation> drv;
-
-    std::unique_ptr<ParsedDerivation> parsedDrv;
-
-    /**
      * The remainder is state held during the build.
      */
 
@@ -150,18 +219,10 @@ struct DerivationGoal : public Goal
     PathLocks outputLocks;
 
     /**
-     * All input paths (that is, the union of FS closures of the
-     * immediate input paths).
-     */
-    StorePathSet inputPaths;
-
-    std::map<std::string, InitialOutput> initialOutputs;
-
-    /**
      * File descriptor for the log file.
      */
     AutoCloseFD fdLogFile;
-    std::shared_ptr<BufferedSink> logFileSink, logSink;
+    std::shared_ptr<BufferedSink> logFileSink;
 
     /**
      * Number of bytes received from the builder's stdout/stderr.
@@ -176,57 +237,22 @@ struct DerivationGoal : public Goal
     std::string currentLogLine;
     size_t currentLogLinePos = 0; // to handle carriage return
 
-    std::string currentHookLine;
-
-    /**
-     * The build hook.
-     */
-    std::unique_ptr<HookInstance> hook;
-
-    /**
-     * The sort of derivation we are building.
-     */
-    std::optional<DerivationType> derivationType;
-
     typedef void (DerivationGoal::*GoalState)();
     GoalState state;
-
-    BuildMode buildMode;
 
     std::unique_ptr<MaintainCount<uint64_t>> mcExpectedBuilds, mcRunningBuilds;
 
     std::unique_ptr<Activity> act;
 
-    /**
-     * Activity that denotes waiting for a lock.
-     */
-    std::unique_ptr<Activity> actLock;
-
     std::map<ActivityId, Activity> builderActivities;
 
-    /**
-     * The remote machine on which we're building.
-     */
-    std::string machineName;
-
-    DerivationGoal(const StorePath & drvPath,
-        const OutputsSpec & wantedOutputs, Worker & worker,
-        BuildMode buildMode = bmNormal);
-    DerivationGoal(const StorePath & drvPath, const BasicDerivation & drv,
-        const OutputsSpec & wantedOutputs, Worker & worker,
-        BuildMode buildMode = bmNormal);
-    virtual ~DerivationGoal();
+    std::unique_ptr<BuilderInterface> builder;
 
     void timedOut(Error && ex) override;
 
     std::string key() override;
 
     void work() override;
-
-    /**
-     * Add wanted outputs to an already existing derivation goal.
-     */
-    void addWantedOutputs(const OutputsSpec & outputs);
 
     /**
      * The states.
@@ -239,33 +265,18 @@ struct DerivationGoal : public Goal
     void closureRepaired();
     void inputsRealised();
     void tryToBuild();
-    virtual void tryLocalBuild();
+    void tryLocalBuild();
     void buildDone();
 
     void resolvedFinished();
 
-    /**
-     * Is the build hook willing to perform the build?
-     */
-    HookReply tryBuildHook();
-
-    virtual int getChildStatus();
+    int getChildStatus();
 
     /**
      * Check that the derivation outputs all exist and register them
      * as valid.
      */
-    virtual SingleDrvOutputs registerOutputs();
-
-    /**
-     * Open a log file and a pipe to it.
-     */
-    Path openLogFile();
-
-    /**
-     * Sign the newly built realisation if the store allows it
-     */
-    virtual void signRealisation(Realisation&) {}
+    SingleDrvOutputs registerOutputs();
 
     /**
      * Close the log file.
@@ -273,21 +284,14 @@ struct DerivationGoal : public Goal
     void closeLogFile();
 
     /**
-     * Close the read side of the logger pipe.
-     */
-    virtual void closeReadPipes();
-
-    /**
      * Cleanup hooks for buildDone()
      */
-    virtual void cleanupHookFinally();
-    virtual void cleanupPreChildKill();
-    virtual void cleanupPostChildKill();
-    virtual bool cleanupDecideWhetherDiskFull();
-    virtual void cleanupPostOutputsRegisteredModeCheck();
-    virtual void cleanupPostOutputsRegisteredModeNonCheck();
-
-    virtual bool isReadDesc(int fd);
+    void cleanupHookFinally();
+    void cleanupPreChildKill();
+    void cleanupPostChildKill();
+    bool cleanupDecideWhetherDiskFull();
+    void cleanupPostOutputsRegisteredModeCheck();
+    void cleanupPostOutputsRegisteredModeNonCheck();
 
     /**
      * Callback used by the worker to write to the log.
@@ -313,24 +317,11 @@ struct DerivationGoal : public Goal
     std::pair<bool, SingleDrvOutputs> checkPathValidity();
 
     /**
-     * Aborts if any output is not valid or corrupt, and otherwise
-     * returns a 'SingleDrvOutputs' structure containing all outputs.
-     */
-    SingleDrvOutputs assertPathValidity();
-
-    /**
      * Forcibly kill the child process, if any.
      */
-    virtual void killChild();
+    void killChild();
 
     void repairClosure();
-
-    void started();
-
-    void done(
-        BuildResult::Status status,
-        SingleDrvOutputs builtOutputs = {},
-        std::optional<Error> ex = {});
 
     void waiteeDone(GoalPtr waitee, ExitCode result) override;
 
@@ -339,6 +330,11 @@ struct DerivationGoal : public Goal
     JobCategory jobCategory() const override {
         return JobCategory::Build;
     };
+
+    /**
+     * Open a log file and a pipe to it.
+     */
+    void openLogFile();
 };
 
 MakeError(NotDeterministic, BuildError);

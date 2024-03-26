@@ -1255,6 +1255,15 @@ public:
           store paths of the latest Nix release.
         )"
     };
+
+    Setting<std::string> wasmEngine{
+        this, "", "wasm-engine",
+        R"(
+          EXPERIMENTAL FEATURE
+
+          Path to WASM engine shared library used for building WASM derivations.
+          Must implement standard WASM C API (https://github.com/WebAssembly/wasm-c-api).
+        )"};
 };
 
 

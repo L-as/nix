@@ -257,6 +257,152 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         .trackingUrl = "https://github.com/NixOS/nix/milestone/39",
     },
     {
+        .tag = Xp::WasmDerivations,
+        .name = "wasm-derivations",
+        .description = R"(
+            Enables building derivations defined via WASM modules.
+            Such derivations have the system set to `wasm`.
+
+            NB: WASM derivations can only be content addressed,
+            hence wasm-derivations requires ca-derivations.
+
+            Such derivations are similar to ordinary derivations but different
+            in important ways. They do not make use of OS-level sandboxing features,
+            nor are the builders given a POSIX-y environment, nor are they subject
+            to the restrictions that come with that.
+
+            The goal of WASM derivations is to have **completely pure** derivations,
+            such that derivations always result in the same outputs,
+            regardless of your system, and of course, be sandboxed such
+            that building a derivation is always safe.
+
+            The combination of Nix and WASM provides unique opportunities for rethinking
+            the host/derivation boundary, notably, we provide recursive-nix-esque functionalities
+            as part of the core interface. In fact, it becomes necessary for doing anything useful
+            with WASM derivations.
+
+            WASM derivations specify a path to a builder that must be a WASM module
+            (either in binary format or textual format).
+
+            At build-time, the module is loaded, the imports are supplied, the module instantiated,
+            the exports of the instantiation read, and the exported function
+            (which would be of type `IO ()` in Haskell) is run.
+
+            Any failures in running the WASM module will make the derivation fail.
+            Any failures from using the imports incorrectly will also make the derivation fail,
+            that is to say, you can not handle errors.
+
+            Paths do not begin with `/nix/store/`, since the only files you can open
+            are all in the store, hence use the paths you'd usually use but strip `/nix/store/`.
+            Neither do they begin with `/`, since relative paths do not exist.
+            `..`, `.`, are invalid too.
+
+            Until type imports are more stable,
+            the interface will make use of the unityped `externref`,
+            hence all types that go across the border form a sum type in essence.
+
+            Passing a value of the wrong variant/constructor will as already
+            outlined above make the derivation fail irrecoverably.
+
+            Files in the interface are heavily simplified; all unnecessary features are
+            removed.
+            They are essentially byte vectors, and nothing more than that.
+
+            Temporary files may exist only in memory, or may be
+            represented as a true file by the implementation,
+            of no consequence to the derivation builder.
+
+            The following imports are available:
+            ```c
+            // Log message.
+            void log(const char* msg, i64 msg_len);
+            
+            // Create a file descriptor that represents a temporary "file"
+            // of the specified size. The file is initially filled with zeros.
+            fd mktemp(i64 size);
+
+            // Open file in store.
+            // The store path must either be a dependency or have been made by
+            // this derivation.
+            fd open(const char* storepath, i64 storepath_len);
+
+            // Close file. If it's a temporary file, it will be deleted.
+            void close(fd);
+
+            // Read from a file from the specified index `count` bytes to `out`.
+            void read(fd, char* out, i64 count, i64 idx);
+
+            // Get the size of the file.
+            i64 size(fd);
+
+            // Resize a temporary file.
+            // New bytes are zero.
+            void resize(fd, i64);
+
+            // Write to the file at the specified index the data given.
+            // If the offset is out of bounds, it fails.
+            // However, if the offset is within the file,
+            // then any bytes written outside the bounds will extend the file size.
+            void write(fd, const char* data, i64 data_len, i64 offset); 
+
+            // Add to the store. This is a thin wrapper around `Store::addToStoreFromDump`.
+            Sink add(const char* name, i64 name_len, bool is_nar, int hashMethod, int hashAlgo);
+
+            // Write to the sink. This always writes the full data, blocking until it's done.
+            void sink_write(Sink, const char* data, i64 data_len);
+
+            // Write to the sink from a file descriptor. This always writes the full data, blocking until it's done.
+            void sink_write_fd(Sink, fd, i64 offset, i64 count);
+
+            // FIXME: remove
+            StorePath add_dumb(const char* name, size_t name_len, DumpMethod, HashMethod, HashAlgo, fd);
+
+            // Mark a store path as an output.
+            // The store path must either be a dependency or made by this derivation.
+            void output(const char* name, i64 name_len, StorePath);
+
+            // Ends the derivation prematurely
+            void exit();
+
+            // Fails the derivation
+            void fail();
+
+            // Build a derivation at the specified path.
+            drv build(const char* storepath, i64 storepath_len, const char* subpath, i64 subpath_len);
+            ```
+
+            All external types are represented as externrefs currently.
+            If you pass a value of the incorrect type, the derivation will fail.
+            In the future, the interface will likely use typed references to push
+            the responsibility of ensuring the values are of the correct type
+            onto the program.
+
+            These are enough to do useful work. Future extensions could expose more functionality,
+            e.g. access to GPUs (or rather, a WebGPU API).
+
+            One very big notable limitation is that you _can not_ JIT-compile WASM.
+            That would necessitate embedding something like the WASM C API in this interface,
+            which would be quite complex.
+
+            This means you can e.g. not open an "executable" file (WASM module) and execute it efficiently.
+            You can of course interpret it, but really, you should be making a derivation for it
+            and executing the derivation instead, leveraging Nix's caching functionality.
+            What if the program does not use the above interface? You modify the module to
+            use the interface, and shim its existing imports in a way that uses the provided imports.
+
+            This naturally creates a need for dynamic derivations, derivations that build derivations.
+            You are thus expected to use `wasm-derivations` with `dynamic-derivations` enabled.
+            `recursive-nix`, however, does _not_ apply, since it runs a Nix daemon "recursively"
+            in the builder environment. That doesn't make sense in this case.
+
+            Another solution is to semi-JIT-compile things by essentially creating a continuation
+            consisting of the original WASM module patched with new code, making a derivation of that,
+            and then outputting the results of that derivation.
+
+            FIXME: expose mmap somehow
+        )",
+    },
+    {
         .tag = Xp::ParseTomlTimestamps,
         .name = "parse-toml-timestamps",
         .description = R"(

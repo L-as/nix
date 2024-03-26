@@ -101,9 +101,12 @@ void Goal::amDone(ExitCode result, std::optional<Error> ex)
 }
 
 
-void Goal::trace(std::string_view s)
+void Goal::trace(std::string_view s, const char* file, const char* function, unsigned line)
 {
-    debug("%1%: %2%", name, s);
+    if (lvlDebug <= nix::verbosity) {
+        std::string msg = fmt("%s:%s:%d:%s:%p:%s", file, function, line, name, this, s);
+        logger->log(lvlDebug, msg);
+    }
 }
 
 }

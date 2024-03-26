@@ -33,6 +33,22 @@ void readFull(int fd, char * buf, size_t count)
     }
 }
 
+void readFullAt(int fd, char * buf, size_t count, off_t offset)
+{
+    while (count) {
+        checkInterrupt();
+        ssize_t res = pread(fd, buf, count, offset);
+        if (res == -1) {
+            if (errno == EINTR) continue;
+            throw SysError("reading from file");
+        }
+        if (res == 0) throw EndOfFile("unexpected end-of-file");
+        count -= res;
+        buf += res;
+        offset += res;
+    }
+}
+
 
 void writeFull(int fd, std::string_view s, bool allowInterrupts)
 {
@@ -43,6 +59,20 @@ void writeFull(int fd, std::string_view s, bool allowInterrupts)
             throw SysError("writing to file");
         if (res > 0)
             s.remove_prefix(res);
+    }
+}
+
+void writeFullAt(int fd, std::string_view s, off_t offset, bool allowInterrupts)
+{
+    while (!s.empty()) {
+        if (allowInterrupts) checkInterrupt();
+        ssize_t res = pwrite(fd, s.data(), s.size(), offset);
+        if (res == -1 && errno != EINTR)
+            throw SysError("writing to file");
+        if (res > 0) {
+            s.remove_prefix(res);
+            offset += res;
+        }
     }
 }
 
@@ -219,6 +249,7 @@ void Pipe::close()
 
 //////////////////////////////////////////////////////////////////////
 
+// FIXME: replace uses with close_range
 void closeMostFDs(const std::set<int> & exceptions)
 {
 #if __linux__

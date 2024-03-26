@@ -98,13 +98,10 @@ struct Goal : public std::enable_shared_from_this<Goal>
      */
     ExitCode exitCode = ecBusy;
 
-protected:
     /**
      * Build result.
      */
     BuildResult buildResult;
-
-public:
 
     /**
      * Project a `BuildResult` with just the information that pertains
@@ -148,7 +145,7 @@ public:
         abort();
     }
 
-    void trace(std::string_view s);
+    void trace(std::string_view s, const char* file = __builtin_FILE(), const char* function = __builtin_FUNCTION(), unsigned line = __builtin_LINE());
 
     std::string getName() const
     {

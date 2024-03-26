@@ -77,7 +77,7 @@ int Pid::kill()
 #if __FreeBSD__ || __APPLE__
         if (errno != EPERM || ::kill(pid, 0) != 0)
 #endif
-            logError(SysError("killing process %d", pid).info());
+            if (errno != ESRCH) logError(SysError("killing process %d", pid).info());
     }
 
     return wait();
@@ -86,6 +86,7 @@ int Pid::kill()
 
 int Pid::wait()
 {
+    debug("calling wait()");
     assert(pid != -1);
     while (1) {
         int status;
