@@ -55,6 +55,7 @@ let
     "nix-main-c"
     "nix-cmd"
     "nix-ng"
+    "nix-functional-tests"
   ];
 in
 {

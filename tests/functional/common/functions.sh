@@ -1,10 +1,12 @@
-# NOTE: instances of @variable@ are substituted as defined in /mk/templates.mk
+# shellcheck shell=bash
 
 set -eu -o pipefail
 
-if [[ -z "${COMMON_VARS_AND_FUNCTIONS_SH_SOURCED-}" ]]; then
+if [[ -z "${COMMON_FUNCTIONS_SH_SOURCED-}" ]]; then
 
-COMMON_VARS_AND_FUNCTIONS_SH_SOURCED=1
+COMMON_FUNCTIONS_SH_SOURCED=1
+
+set +x
 
 isTestOnNixOS() {
   [[ "${isTestOnNixOS:-}" == 1 ]]
@@ -15,64 +17,14 @@ die() {
   exit 1
 }
 
-set +x
-
-commonDir="$(readlink -f "$(dirname "${BASH_SOURCE[0]-$0}")")"
-
-source "$commonDir/subst-vars.sh"
-# Make sure shellcheck knows all these will be defined by the above generated snippet
-: "${bindir?} ${coreutils?} ${dot?} ${SHELL?} ${PAGER?} ${busybox?} ${version?} ${system?} ${BUILD_SHARED_LIBS?}"
-
-source "$commonDir/paths.sh"
-source "$commonDir/test-root.sh"
-
-test_nix_conf_dir=$TEST_ROOT/etc
-test_nix_conf=$test_nix_conf_dir/nix.conf
-
-export TEST_HOME=$TEST_ROOT/test-home
-
-if ! isTestOnNixOS; then
-  export NIX_STORE_DIR
-  if ! NIX_STORE_DIR=$(readlink -f $TEST_ROOT/store 2> /dev/null); then
-      # Maybe the build directory is symlinked.
-      export NIX_IGNORE_SYMLINK_STORE=1
-      NIX_STORE_DIR=$TEST_ROOT/store
-  fi
-  export NIX_LOCALSTATE_DIR=$TEST_ROOT/var
-  export NIX_LOG_DIR=$TEST_ROOT/var/log/nix
-  export NIX_STATE_DIR=$TEST_ROOT/var/nix
-  export NIX_CONF_DIR=$test_nix_conf_dir
-  export NIX_DAEMON_SOCKET_PATH=$TEST_ROOT/dSocket
-  unset NIX_USER_CONF_FILES
-  export _NIX_TEST_SHARED=$TEST_ROOT/shared
-  if [[ -n $NIX_STORE ]]; then
-      export _NIX_TEST_NO_SANDBOX=1
-  fi
-  export _NIX_IN_TEST=$TEST_ROOT/shared
-  export _NIX_TEST_NO_LSOF=1
-  export NIX_REMOTE=${NIX_REMOTE_-}
-
-fi # ! isTestOnNixOS
-
-unset NIX_PATH
-export HOME=$TEST_HOME
-unset XDG_STATE_HOME
-unset XDG_DATA_HOME
-unset XDG_CONFIG_HOME
-unset XDG_CONFIG_DIRS
-unset XDG_CACHE_HOME
-
-export IMPURE_VAR1=foo
-export IMPURE_VAR2=bar
-
-cacheDir=$TEST_ROOT/binary-cache
-
 readLink() {
+    # TODO fix this
+    # shellcheck disable=SC2012
     ls -l "$1" | sed 's/.*->\ //'
 }
 
 clearProfiles() {
-    profiles="$HOME"/.local/state/nix/profiles
+    profiles="$HOME/.local/state/nix/profiles"
     rm -rf "$profiles"
 }
 
@@ -105,11 +57,11 @@ doClearStore() {
 }
 
 clearCache() {
-    rm -rf "$cacheDir"
+    rm -rf "${cacheDir?}"
 }
 
 clearCacheCache() {
-    rm -f $TEST_HOME/.cache/nix/binary-cache*
+    rm -f "$TEST_HOME/.cache/nix/binary-cache"*
 }
 
 startDaemon() {
@@ -122,7 +74,7 @@ startDaemon() {
         return
     fi
     # Start the daemon, wait for the socket to appear.
-    rm -f $NIX_DAEMON_SOCKET_PATH
+    rm -f "$NIX_DAEMON_SOCKET_PATH"
     PATH=$DAEMON_PATH nix --extra-experimental-features 'nix-command' daemon &
     _NIX_TEST_DAEMON_PID=$!
     export _NIX_TEST_DAEMON_PID
@@ -151,14 +103,14 @@ killDaemon() {
     if [[ "${_NIX_TEST_DAEMON_PID-}" == '' ]]; then
         return
     fi
-    kill $_NIX_TEST_DAEMON_PID
+    kill "$_NIX_TEST_DAEMON_PID"
     for i in {0..100}; do
-        kill -0 $_NIX_TEST_DAEMON_PID 2> /dev/null || break
+        kill -0 "$_NIX_TEST_DAEMON_PID" 2> /dev/null || break
         sleep 0.1
     done
-    kill -9 $_NIX_TEST_DAEMON_PID 2> /dev/null || true
-    wait $_NIX_TEST_DAEMON_PID || true
-    rm -f $NIX_DAEMON_SOCKET_PATH
+    kill -9 "$_NIX_TEST_DAEMON_PID" 2> /dev/null || true
+    wait "$_NIX_TEST_DAEMON_PID" || true
+    rm -f "$NIX_DAEMON_SOCKET_PATH"
     # Indicate daemon is stopped
     unset _NIX_TEST_DAEMON_PID
     # Restore old nix remote
@@ -177,20 +129,17 @@ restartDaemon() {
     startDaemon
 }
 
-if [[ $(uname) == Linux ]] && [[ -L /proc/self/ns/user ]] && unshare --user true; then
-    _canUseSandbox=1
-fi
-
 isDaemonNewer () {
   [[ -n "${NIX_DAEMON_PACKAGE:-}" ]] || return 0
   local requiredVersion="$1"
-  local daemonVersion=$($NIX_DAEMON_PACKAGE/bin/nix daemon --version | cut -d' ' -f3)
+  local daemonVersion
+  daemonVersion=$("$NIX_DAEMON_PACKAGE/bin/nix" daemon --version | cut -d' ' -f3)
   [[ $(nix eval --expr "builtins.compareVersions ''$daemonVersion'' ''$requiredVersion''") -ge 0 ]]
 }
 
 skipTest () {
     echo "$1, skipping this test..." >&2
-    exit 99
+    exit 77
 }
 
 TODO_NixOS() {
@@ -265,7 +214,7 @@ expectStderr() {
 #   error: This error is expected
 #   EOF
 assertStderr() {
-    diff -u /dev/stdin <($@ 2>/dev/null 2>&1)
+    diff -u /dev/stdin <("$@" 2>/dev/null 2>&1)
 }
 
 needLocalStore() {
@@ -281,7 +230,7 @@ buggyNeedLocalStore() {
 
 enableFeatures() {
     local features="$1"
-    sed -i 's/experimental-features .*/& '"$features"'/' "$test_nix_conf_dir"/nix.conf
+    sed -i 's/experimental-features .*/& '"$features"'/' "${test_nix_conf?}"
 }
 
 set -x
@@ -331,4 +280,4 @@ count() {
 
 trap onError ERR
 
-fi # COMMON_VARS_AND_FUNCTIONS_SH_SOURCED
+fi # COMMON_FUNCTIONS_SH_SOURCED

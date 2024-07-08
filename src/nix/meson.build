@@ -169,6 +169,8 @@ this_exe = executable(
   install : true,
 )
 
+meson.override_find_program('nix', this_exe)
+
 nix_symlinks = [
   'nix-build',
   'nix-channel',
