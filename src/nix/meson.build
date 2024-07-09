@@ -168,3 +168,36 @@ this_exe = executable(
   link_args: linker_export_flags,
   install : true,
 )
+
+nix_symlinks = [
+  'nix-build',
+  'nix-channel',
+  'nix-collect-garbage',
+  'nix-copy-closure',
+  'nix-daemon',
+  'nix-env',
+  'nix-hash',
+  'nix-instantiate',
+  'nix-prefetch-url',
+  'nix-shell',
+  'nix-store',
+]
+
+foreach linkname : nix_symlinks
+  install_symlink(
+    linkname,
+    # TODO(Qyriad): should these continue to be relative symlinks?
+    pointing_to : 'nix',
+    install_dir : get_option('bindir'),
+    # The 'runtime' tag is what executables default to, which we want to emulate here.
+    install_tag : 'runtime'
+  )
+endforeach
+
+install_symlink(
+  'build-remote',
+  pointing_to : '..' / '..'/ get_option('bindir') / 'nix',
+  install_dir : get_option('libexecdir') / 'nix',
+  # The 'runtime' tag is what executables default to, which we want to emulate here.
+  install_tag : 'runtime'
+)

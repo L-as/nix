@@ -84,8 +84,6 @@ mkMesonDerivation (finalAttrs: {
     ]
   );
 
-  outputs = [ "out" "dev" ];
-
   nativeBuildInputs = [
     meson
     ninja
