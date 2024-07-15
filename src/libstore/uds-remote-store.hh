@@ -28,15 +28,18 @@ class UDSRemoteStore : public virtual UDSRemoteStoreConfig
 public:
 
     UDSRemoteStore(const Params & params);
-    UDSRemoteStore(const std::string scheme, std::string path, const Params & params);
+    UDSRemoteStore(
+        std::string_view scheme,
+        PathView path,
+        const Params & params);
 
     std::string getUri() override;
 
     static std::set<std::string> uriSchemes()
     { return {"unix"}; }
 
-    ref<FSAccessor> getFSAccessor() override
-    { return LocalFSStore::getFSAccessor(); }
+    ref<SourceAccessor> getFSAccessor(bool requireValidPath = true) override
+    { return LocalFSStore::getFSAccessor(requireValidPath); }
 
     void narFromPath(const StorePath & path, Sink & sink) override
     { LocalFSStore::narFromPath(path, sink); }

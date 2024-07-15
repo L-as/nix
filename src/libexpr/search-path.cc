@@ -1,16 +1,15 @@
 #include "search-path.hh"
-#include "util.hh"
 
 namespace nix {
 
-std::optional<std::string_view> SearchPath::Prefix::suffixIfPotentialMatch(
+std::optional<std::string_view> LookupPath::Prefix::suffixIfPotentialMatch(
     std::string_view path) const
 {
     auto n = s.size();
 
     /* Non-empty prefix and suffix must be separated by a /, or the
        prefix is not a valid path prefix. */
-    bool needSeparator = n > 0 && (path.size() - n) > 0;
+    bool needSeparator = n > 0 && n < path.size();
 
     if (needSeparator && path[n] != '/') {
         return std::nullopt;
@@ -28,11 +27,11 @@ std::optional<std::string_view> SearchPath::Prefix::suffixIfPotentialMatch(
 }
 
 
-SearchPath::Elem SearchPath::Elem::parse(std::string_view rawElem)
+LookupPath::Elem LookupPath::Elem::parse(std::string_view rawElem)
 {
     size_t pos = rawElem.find('=');
 
-    return SearchPath::Elem {
+    return LookupPath::Elem {
         .prefix = Prefix {
             .s = pos == std::string::npos
                 ? std::string { "" }
@@ -45,11 +44,11 @@ SearchPath::Elem SearchPath::Elem::parse(std::string_view rawElem)
 }
 
 
-SearchPath parseSearchPath(const Strings & rawElems)
+LookupPath LookupPath::parse(const Strings & rawElems)
 {
-    SearchPath res;
+    LookupPath res;
     for (auto & rawElem : rawElems)
-        res.elements.emplace_back(SearchPath::Elem::parse(rawElem));
+        res.elements.emplace_back(LookupPath::Elem::parse(rawElem));
     return res;
 }
 

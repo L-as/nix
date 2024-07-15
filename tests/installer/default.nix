@@ -13,6 +13,17 @@ let
       '';
     };
 
+    install-both-profile-links = {
+      script = ''
+        tar -xf ./nix.tar.xz
+        mv ./nix-* nix
+        ln -s $HOME/.local/state/nix/profiles/a-profile $HOME/.nix-profile
+        mkdir -p $HOME/.local/state/nix
+        ln -s $HOME/.local/state/nix/profiles/b-profile $HOME/.local/state/nix/profile
+        ./nix/install --no-channel-add
+      '';
+    };
+
     install-force-no-daemon = {
       script = ''
         tar -xf ./nix.tar.xz
@@ -213,7 +224,7 @@ let
           source /etc/bashrc || true
 
           nix-env --version
-          nix --extra-experimental-features nix-command store ping
+          nix --extra-experimental-features nix-command store info
 
           out=\$(nix-build --no-substitute -E 'derivation { name = "foo"; system = "x86_64-linux"; builder = "/bin/sh"; args = ["-c" "echo foobar > \$out"]; }')
           [[ \$(cat \$out) = foobar ]]

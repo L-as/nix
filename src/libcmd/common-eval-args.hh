@@ -2,15 +2,45 @@
 ///@file
 
 #include "args.hh"
+#include "canon-path.hh"
 #include "common-args.hh"
 #include "search-path.hh"
+
+#include <filesystem>
 
 namespace nix {
 
 class Store;
+
+namespace fetchers { struct Settings; }
+
 class EvalState;
+struct EvalSettings;
+struct CompatibilitySettings;
 class Bindings;
 struct SourcePath;
+
+namespace flake { struct Settings; }
+
+/**
+ * @todo Get rid of global setttings variables
+ */
+extern fetchers::Settings fetchSettings;
+
+/**
+ * @todo Get rid of global setttings variables
+ */
+extern EvalSettings evalSettings;
+
+/**
+ * @todo Get rid of global setttings variables
+ */
+extern flake::Settings flakeSettings;
+
+/**
+ * Settings that control behaviors that have changed since Nix 2.3.
+ */
+extern CompatibilitySettings compatibilitySettings;
 
 struct MixEvalArgs : virtual Args, virtual MixRepair
 {
@@ -20,14 +50,24 @@ struct MixEvalArgs : virtual Args, virtual MixRepair
 
     Bindings * getAutoArgs(EvalState & state);
 
-    SearchPath searchPath;
+    LookupPath lookupPath;
 
     std::optional<std::string> evalStoreUrl;
 
 private:
-    std::map<std::string, std::string> autoArgs;
+    struct AutoArgExpr { std::string expr; };
+    struct AutoArgString { std::string s; };
+    struct AutoArgFile { std::filesystem::path path; };
+    struct AutoArgStdin { };
+
+    using AutoArg = std::variant<AutoArgExpr, AutoArgString, AutoArgFile, AutoArgStdin>;
+
+    std::map<std::string, AutoArg> autoArgs;
 };
 
-SourcePath lookupFileArg(EvalState & state, std::string_view s);
+/**
+ * @param baseDir Optional [base directory](https://nixos.org/manual/nix/unstable/glossary#gloss-base-directory)
+ */
+SourcePath lookupFileArg(EvalState & state, std::string_view s, const Path * baseDir = nullptr);
 
 }

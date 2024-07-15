@@ -2,29 +2,33 @@
 #include "derivations.hh"
 #include "dotgraph.hh"
 #include "globals.hh"
-#include "build-result.hh"
 #include "store-cast.hh"
-#include "gc-store.hh"
+#include "local-fs-store.hh"
 #include "log-store.hh"
-#include "local-store.hh"
-#include "monitor-fd.hh"
 #include "serve-protocol.hh"
+#include "serve-protocol-connection.hh"
 #include "shared.hh"
-#include "util.hh"
-#include "worker-protocol.hh"
-#include "worker-protocol-impl.hh"
 #include "graphml.hh"
 #include "legacy.hh"
+#include "posix-source-accessor.hh"
 #include "path-with-outputs.hh"
+
+#ifndef _WIN32 // TODO implement on Windows or provide allowed-to-noop interface
+# include "local-store.hh"
+# include "monitor-fd.hh"
+# include "posix-fs-canonicalise.hh"
+#endif
 
 #include <iostream>
 #include <algorithm>
-#include <cstdio>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "build-result.hh"
+#include "exit.hh"
+#include "serve-protocol-impl.hh"
 
 namespace nix_store {
 
@@ -43,12 +47,14 @@ static bool noOutput = false;
 static std::shared_ptr<Store> store;
 
 
+#ifndef _WIN32 // TODO reenable on Windows once we have `LocalStore` there
 ref<LocalStore> ensureLocalStore()
 {
     auto store2 = std::dynamic_pointer_cast<LocalStore>(store);
     if (!store2) throw Error("you don't have sufficient rights to use this command");
     return ref<LocalStore>(store2);
 }
+#endif
 
 
 static StorePath useDeriver(const StorePath & path)
@@ -176,8 +182,11 @@ static void opAdd(Strings opFlags, Strings opArgs)
 {
     if (!opFlags.empty()) throw UsageError("unknown flag");
 
-    for (auto & i : opArgs)
-        cout << fmt("%s\n", store->printStorePath(store->addToStore(std::string(baseNameOf(i)), i)));
+    for (auto & i : opArgs) {
+        auto [accessor, canonPath] = PosixSourceAccessor::createAtRoot(i);
+        cout << fmt("%s\n", store->printStorePath(store->addToStore(
+            std::string(baseNameOf(i)), {accessor, canonPath})));
+    }
 }
 
 
@@ -185,20 +194,26 @@ static void opAdd(Strings opFlags, Strings opArgs)
    store. */
 static void opAddFixed(Strings opFlags, Strings opArgs)
 {
-    auto method = FileIngestionMethod::Flat;
+    ContentAddressMethod method = ContentAddressMethod::Raw::Flat;
 
     for (auto & i : opFlags)
-        if (i == "--recursive") method = FileIngestionMethod::Recursive;
+        if (i == "--recursive") method = ContentAddressMethod::Raw::NixArchive;
         else throw UsageError("unknown flag '%1%'", i);
 
     if (opArgs.empty())
         throw UsageError("first argument must be hash algorithm");
 
-    HashType hashAlgo = parseHashType(opArgs.front());
+    HashAlgorithm hashAlgo = parseHashAlgo(opArgs.front());
     opArgs.pop_front();
 
-    for (auto & i : opArgs)
-        std::cout << fmt("%s\n", store->printStorePath(store->addToStoreSlow(baseNameOf(i), i, method, hashAlgo).path));
+    for (auto & i : opArgs) {
+        auto [accessor, canonPath] = PosixSourceAccessor::createAtRoot(i);
+        std::cout << fmt("%s\n", store->printStorePath(store->addToStoreSlow(
+            baseNameOf(i),
+            {accessor, canonPath},
+            method,
+            hashAlgo).path));
+    }
 }
 
 
@@ -208,14 +223,14 @@ static void opPrintFixedPath(Strings opFlags, Strings opArgs)
     auto method = FileIngestionMethod::Flat;
 
     for (auto i : opFlags)
-        if (i == "--recursive") method = FileIngestionMethod::Recursive;
+        if (i == "--recursive") method = FileIngestionMethod::NixArchive;
         else throw UsageError("unknown flag '%1%'", i);
 
     if (opArgs.size() != 3)
         throw UsageError("'--print-fixed-path' requires three arguments");
 
     Strings::iterator i = opArgs.begin();
-    HashType hashAlgo = parseHashType(*i++);
+    HashAlgorithm hashAlgo = parseHashAlgo(*i++);
     std::string hash = *i++;
     std::string name = *i++;
 
@@ -283,7 +298,7 @@ static void opQuery(Strings opFlags, Strings opArgs)
 {
     enum QueryType
         { qOutputs, qRequisites, qReferences, qReferrers
-        , qReferrersClosure, qDeriver, qBinding, qHash, qSize
+        , qReferrersClosure, qDeriver, qValidDerivers, qBinding, qHash, qSize
         , qTree, qGraph, qGraphML, qResolve, qRoots };
     std::optional<QueryType> query;
     bool useOutput = false;
@@ -299,6 +314,7 @@ static void opQuery(Strings opFlags, Strings opArgs)
         else if (i == "--referrers" || i == "--referers") query = qReferrers;
         else if (i == "--referrers-closure" || i == "--referers-closure") query = qReferrersClosure;
         else if (i == "--deriver" || i == "-d") query = qDeriver;
+        else if (i == "--valid-derivers") query = qValidDerivers;
         else if (i == "--binding" || i == "-b") {
             if (opArgs.size() == 0)
                 throw UsageError("expected binding name");
@@ -372,6 +388,21 @@ static void opQuery(Strings opFlags, Strings opArgs)
             }
             break;
 
+        case qValidDerivers: {
+            StorePathSet result;
+            for (auto & i : opArgs) {
+                auto derivers = store->queryValidDerivers(store->followLinksToStorePath(i));
+                for (const auto &i: derivers) {
+                    result.insert(i);
+                }
+            }
+            auto sorted = store->topoSortPaths(result);
+            for (StorePaths::reverse_iterator i = sorted.rbegin();
+                 i != sorted.rend(); ++i)
+                cout << fmt("%s\n", store->printStorePath(*i));
+            break;
+        }
+
         case qBinding:
             for (auto & i : opArgs) {
                 auto path = useDeriver(store->followLinksToStorePath(i));
@@ -390,8 +421,8 @@ static void opQuery(Strings opFlags, Strings opArgs)
                 for (auto & j : maybeUseOutputs(store->followLinksToStorePath(i), useOutput, forceRealise)) {
                     auto info = store->queryPathInfo(j);
                     if (query == qHash) {
-                        assert(info->narHash.type == htSHA256);
-                        cout << fmt("%s\n", info->narHash.to_string(Base32, true));
+                        assert(info->narHash.algo == HashAlgorithm::SHA256);
+                        cout << fmt("%s\n", info->narHash.to_string(HashFormat::Nix32, true));
                     } else if (query == qSize)
                         cout << fmt("%d\n", info->narSize);
                 }
@@ -524,9 +555,15 @@ static void registerValidity(bool reregister, bool hashGiven, bool canonicalise)
         if (!store->isValidPath(info->path) || reregister) {
             /* !!! races */
             if (canonicalise)
+#ifdef _WIN32 // TODO implement on Windows
+                throw UnimplementedError("file attribute canonicalisation Is not implemented on Windows");
+#else
                 canonicalisePathMetaData(store->printStorePath(info->path), {});
+#endif
             if (!hashGiven) {
-                HashResult hash = hashPath(htSHA256, store->printStorePath(info->path));
+                HashResult hash = hashPath(
+                    {store->getFSAccessor(false), CanonPath { store->printStorePath(info->path) }},
+                    FileSerialisationMethod::NixArchive, HashAlgorithm::SHA256);
                 info->narHash = hash.first;
                 info->narSize = hash.second;
             }
@@ -534,7 +571,9 @@ static void registerValidity(bool reregister, bool hashGiven, bool canonicalise)
         }
     }
 
+#ifndef _WIN32 // TODO reenable on Windows once we have `LocalStore` there
     ensureLocalStore()->registerValidPaths(infos);
+#endif
 }
 
 
@@ -655,7 +694,7 @@ static void opDump(Strings opFlags, Strings opArgs)
     if (!opFlags.empty()) throw UsageError("unknown flag");
     if (opArgs.size() != 1) throw UsageError("only one argument allowed");
 
-    FdSink sink(STDOUT_FILENO);
+    FdSink sink(getStandardOut());
     std::string path = *opArgs.begin();
     dumpPath(path, sink);
     sink.flush();
@@ -683,7 +722,7 @@ static void opExport(Strings opFlags, Strings opArgs)
     for (auto & i : opArgs)
         paths.insert(store->followLinksToStorePath(i));
 
-    FdSink sink(STDOUT_FILENO);
+    FdSink sink(getStandardOut());
     store->exportPaths(paths, sink);
     sink.flush();
 }
@@ -748,14 +787,14 @@ static void opVerifyPath(Strings opFlags, Strings opArgs)
         auto path = store->followLinksToStorePath(i);
         printMsg(lvlTalkative, "checking path '%s'...", store->printStorePath(path));
         auto info = store->queryPathInfo(path);
-        HashSink sink(info->narHash.type);
+        HashSink sink(info->narHash.algo);
         store->narFromPath(path, sink);
         auto current = sink.finish();
         if (current.first != info->narHash) {
             printError("path '%s' was modified! expected hash '%s', got '%s'",
                 store->printStorePath(path),
-                info->narHash.to_string(Base32, true),
-                current.first.to_string(Base32, true));
+                info->narHash.to_string(HashFormat::Nix32, true),
+                current.first.to_string(HashFormat::Nix32, true));
             status = 1;
         }
     }
@@ -796,17 +835,21 @@ static void opServe(Strings opFlags, Strings opArgs)
     if (!opArgs.empty()) throw UsageError("no arguments expected");
 
     FdSource in(STDIN_FILENO);
-    FdSink out(STDOUT_FILENO);
+    FdSink out(getStandardOut());
 
     /* Exchange the greeting. */
-    unsigned int magic = readInt(in);
-    if (magic != SERVE_MAGIC_1) throw Error("protocol mismatch");
-    out << SERVE_MAGIC_2 << SERVE_PROTOCOL_VERSION;
-    out.flush();
-    unsigned int clientVersion = readInt(in);
+    ServeProto::Version clientVersion =
+        ServeProto::BasicServerConnection::handshake(
+            out, in, SERVE_PROTOCOL_VERSION);
 
-    WorkerProto::ReadConn rconn { .from = in };
-    WorkerProto::WriteConn wconn { .to = out };
+    ServeProto::ReadConn rconn {
+        .from = in,
+        .version = clientVersion,
+    };
+    ServeProto::WriteConn wconn {
+        .to = out,
+        .version = clientVersion,
+    };
 
     auto getBuildSettings = [&]() {
         // FIXME: changing options here doesn't work if we're
@@ -814,27 +857,33 @@ static void opServe(Strings opFlags, Strings opArgs)
         verbosity = lvlError;
         settings.keepLog = false;
         settings.useSubstitutes = false;
-        settings.maxSilentTime = readInt(in);
-        settings.buildTimeout = readInt(in);
+
+        auto options = ServeProto::Serialise<ServeProto::BuildOptions>::read(*store, rconn);
+
+        // Only certain feilds get initialized based on the protocol
+        // version. This is why not all the code below is unconditional.
+        // See how the serialization logic in
+        // `ServeProto::Serialise<ServeProto::BuildOptions>` matches
+        // these conditions.
+        settings.maxSilentTime = options.maxSilentTime;
+        settings.buildTimeout = options.buildTimeout;
         if (GET_PROTOCOL_MINOR(clientVersion) >= 2)
-            settings.maxLogSize = readNum<unsigned long>(in);
+            settings.maxLogSize = options.maxLogSize;
         if (GET_PROTOCOL_MINOR(clientVersion) >= 3) {
-            auto nrRepeats = readInt(in);
-            if (nrRepeats != 0) {
+            if (options.nrRepeats != 0) {
                 throw Error("client requested repeating builds, but this is not currently implemented");
             }
-            // Ignore 'enforceDeterminism'. It used to be true by
-            // default, but also only never had any effect when
-            // `nrRepeats == 0`.  We have already asserted that
-            // `nrRepeats` in fact is 0, so we can safely ignore this
-            // without doing something other than what the client
-            // asked for.
-            readInt(in);
-
+            // Ignore 'options.enforceDeterminism'.
+            //
+            // It used to be true by default, but also only never had
+            // any effect when `nrRepeats == 0`.  We have already
+            // checked that `nrRepeats` in fact is 0, so we can safely
+            // ignore this without doing something other than what the
+            // client asked for.
             settings.runDiffHook = true;
         }
         if (GET_PROTOCOL_MINOR(clientVersion) >= 7) {
-            settings.keepFailed = (bool) readInt(in);
+            settings.keepFailed = options.keepFailed;
         }
     };
 
@@ -851,7 +900,7 @@ static void opServe(Strings opFlags, Strings opArgs)
             case ServeProto::Command::QueryValidPaths: {
                 bool lock = readInt(in);
                 bool substitute = readInt(in);
-                auto paths = WorkerProto::Serialise<StorePathSet>::read(*store, rconn);
+                auto paths = ServeProto::Serialise<StorePathSet>::read(*store, rconn);
                 if (lock && writeAllowed)
                     for (auto & path : paths)
                         store->addTempRoot(path);
@@ -860,26 +909,18 @@ static void opServe(Strings opFlags, Strings opArgs)
                     store->substitutePaths(paths);
                 }
 
-                WorkerProto::write(*store, wconn, store->queryValidPaths(paths));
+                ServeProto::write(*store, wconn, store->queryValidPaths(paths));
                 break;
             }
 
             case ServeProto::Command::QueryPathInfos: {
-                auto paths = WorkerProto::Serialise<StorePathSet>::read(*store, rconn);
+                auto paths = ServeProto::Serialise<StorePathSet>::read(*store, rconn);
                 // !!! Maybe we want a queryPathInfos?
                 for (auto & i : paths) {
                     try {
                         auto info = store->queryPathInfo(i);
-                        out << store->printStorePath(info->path)
-                            << (info->deriver ? store->printStorePath(*info->deriver) : "");
-                        WorkerProto::write(*store, wconn, info->references);
-                        // !!! Maybe we want compression?
-                        out << info->narSize // downloadSize
-                            << info->narSize;
-                        if (GET_PROTOCOL_MINOR(clientVersion) >= 4)
-                            out << info->narHash.to_string(Base32, true)
-                                << renderContentAddress(info->ca)
-                                << info->sigs;
+                        out << store->printStorePath(info->path);
+                        ServeProto::write(*store, wconn, static_cast<const UnkeyedValidPathInfo &>(*info));
                     } catch (InvalidPath &) {
                     }
                 }
@@ -900,7 +941,7 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             case ServeProto::Command::ExportPaths: {
                 readInt(in); // obsolete
-                store->exportPaths(WorkerProto::Serialise<StorePathSet>::read(*store, rconn), out);
+                store->exportPaths(ServeProto::Serialise<StorePathSet>::read(*store, rconn), out);
                 break;
             }
 
@@ -915,12 +956,14 @@ static void opServe(Strings opFlags, Strings opArgs)
                 getBuildSettings();
 
                 try {
+#ifndef _WIN32 // TODO figure out if Windows needs something similar
                     MonitorFdHup monitor(in.fd);
+#endif
                     store->buildPaths(toDerivedPaths(paths));
                     out << 0;
                 } catch (Error & e) {
-                    assert(e.status);
-                    out << e.status << e.msg();
+                    assert(e.info().status);
+                    out << e.info().status << e.msg();
                 }
                 break;
             }
@@ -935,29 +978,21 @@ static void opServe(Strings opFlags, Strings opArgs)
 
                 getBuildSettings();
 
+#ifndef _WIN32 // TODO figure out if Windows needs something similar
                 MonitorFdHup monitor(in.fd);
+#endif
                 auto status = store->buildDerivation(drvPath, drv);
 
-                out << status.status << status.errorMsg;
-
-                if (GET_PROTOCOL_MINOR(clientVersion) >= 3)
-                    out << status.timesBuilt << status.isNonDeterministic << status.startTime << status.stopTime;
-                if (GET_PROTOCOL_MINOR(clientVersion) >= 6) {
-                    DrvOutputs builtOutputs;
-                    for (auto & [output, realisation] : status.builtOutputs)
-                        builtOutputs.insert_or_assign(realisation.id, realisation);
-                    WorkerProto::write(*store, wconn, builtOutputs);
-                }
-
+                ServeProto::write(*store, wconn, status);
                 break;
             }
 
             case ServeProto::Command::QueryClosure: {
                 bool includeOutputs = readInt(in);
                 StorePathSet closure;
-                store->computeFSClosure(WorkerProto::Serialise<StorePathSet>::read(*store, rconn),
+                store->computeFSClosure(ServeProto::Serialise<StorePathSet>::read(*store, rconn),
                     closure, false, includeOutputs);
-                WorkerProto::write(*store, wconn, closure);
+                ServeProto::write(*store, wconn, closure);
                 break;
             }
 
@@ -968,11 +1003,11 @@ static void opServe(Strings opFlags, Strings opArgs)
                 auto deriver = readString(in);
                 ValidPathInfo info {
                     store->parseStorePath(path),
-                    Hash::parseAny(readString(in), htSHA256),
+                    Hash::parseAny(readString(in), HashAlgorithm::SHA256),
                 };
                 if (deriver != "")
                     info.deriver = store->parseStorePath(deriver);
-                info.references = WorkerProto::Serialise<StorePathSet>::read(*store, rconn);
+                info.references = ServeProto::Serialise<StorePathSet>::read(*store, rconn);
                 in >> info.registrationTime >> info.narSize >> info.ultimate;
                 info.sigs = readStrings<StringSet>(in);
                 info.ca = ContentAddress::parseOpt(readString(in));

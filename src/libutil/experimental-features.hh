@@ -1,7 +1,6 @@
 #pragma once
 ///@file
 
-#include "comparator.hh"
 #include "error.hh"
 #include "json-utils.hh"
 #include "types.hh"
@@ -20,18 +19,22 @@ enum struct ExperimentalFeature
     CaDerivations,
     ImpureDerivations,
     Flakes,
+    FetchTree,
     NixCommand,
+    GitHashing,
     RecursiveNix,
     NoUrlLiterals,
     FetchClosure,
-    ReplFlake,
     AutoAllocateUids,
     Cgroups,
-    DiscardReferences,
     DaemonTrustOverride,
     DynamicDerivations,
     ParseTomlTimestamps,
     ReadOnlyLocalStore,
+    LocalOverlayStore,
+    ConfigurableImpureEnv,
+    MountedSSHStore,
+    VerifiedFetches,
 };
 
 /**

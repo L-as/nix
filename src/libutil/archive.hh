@@ -3,6 +3,7 @@
 
 #include "types.hh"
 #include "serialise.hh"
+#include "fs-sink.hh"
 
 
 namespace nix {
@@ -72,59 +73,14 @@ time_t dumpPathAndGetMtime(const Path & path, Sink & sink,
  */
 void dumpString(std::string_view s, Sink & sink);
 
-/**
- * \todo Fix this API, it sucks.
- */
-struct ParseSink
-{
-    virtual void createDirectory(const Path & path) { };
+void parseDump(FileSystemObjectSink & sink, Source & source);
 
-    virtual void createRegularFile(const Path & path) { };
-    virtual void closeRegularFile() { };
-    virtual void isExecutable() { };
-    virtual void preallocateContents(uint64_t size) { };
-    virtual void receiveContents(std::string_view data) { };
-
-    virtual void createSymlink(const Path & path, const std::string & target) { };
-};
-
-/**
- * If the NAR archive contains a single file at top-level, then save
- * the contents of the file to `s`.  Otherwise barf.
- */
-struct RetrieveRegularNARSink : ParseSink
-{
-    bool regular = true;
-    Sink & sink;
-
-    RetrieveRegularNARSink(Sink & sink) : sink(sink) { }
-
-    void createDirectory(const Path & path) override
-    {
-        regular = false;
-    }
-
-    void receiveContents(std::string_view data) override
-    {
-        sink(data);
-    }
-
-    void createSymlink(const Path & path, const std::string & target) override
-    {
-        regular = false;
-    }
-};
-
-void parseDump(ParseSink & sink, Source & source);
-
-void restorePath(const Path & path, Source & source);
+void restorePath(const std::filesystem::path & path, Source & source);
 
 /**
  * Read a NAR from 'source' and write it to 'sink'.
  */
 void copyNAR(Source & source, Sink & sink);
-
-void copyPath(const Path & from, const Path & to);
 
 
 inline constexpr std::string_view narVersionMagic1 = "nix-archive-1";

@@ -1,34 +1,25 @@
 #pragma once
 ///@file
 
-#include "util.hh"
+#include "file-descriptor.hh"
+#include "processes.hh"
 #include "args.hh"
+#include "args/root.hh"
 #include "common-args.hh"
 #include "path.hh"
 #include "derived-path.hh"
 
 #include <signal.h>
 
-#include <locale>
-
-
 namespace nix {
-
-class Exit : public std::exception
-{
-public:
-    int status;
-    Exit() : status(0) { }
-    Exit(int status) : status(status) { }
-    virtual ~Exit();
-};
 
 int handleExceptions(const std::string & programName, std::function<void()> fun);
 
 /**
  * Don't forget to call initPlugins() after settings are initialized!
+ * @param loadConfig Whether to load configuration from `nix.conf`, `NIX_CONFIG`, etc. May be disabled for unit tests.
  */
-void initNix();
+void initNix(bool loadConfig = true);
 
 void parseCmdLine(int argc, char * * argv,
     std::function<bool(Strings::iterator & arg, const Strings::iterator & end)> parseArg);
@@ -66,7 +57,7 @@ template<class N> N getIntArg(const std::string & opt,
 }
 
 
-struct LegacyArgs : public MixCommonArgs
+struct LegacyArgs : public MixCommonArgs, public RootArgs
 {
     std::function<bool(Strings::iterator & arg, const Strings::iterator & end)> parseArg;
 
@@ -85,8 +76,9 @@ struct LegacyArgs : public MixCommonArgs
 void showManPage(const std::string & name);
 
 /**
- * The constructor of this class starts a pager if stdout is a
- * terminal and $PAGER is set. Stdout is redirected to the pager.
+ * The constructor of this class starts a pager if standard output is a
+ * terminal and $PAGER is set. Standard output is redirected to the
+ * pager.
  */
 class RunPager
 {
@@ -95,8 +87,10 @@ public:
     ~RunPager();
 
 private:
+#ifndef _WIN32 // TODO re-enable on Windows, once we can start processes.
     Pid pid;
-    int stdout;
+#endif
+    Descriptor std_out;
 };
 
 extern volatile ::sig_atomic_t blockInt;
@@ -118,6 +112,7 @@ struct PrintFreed
 };
 
 
+#ifndef _WIN32
 /**
  * Install a SIGSEGV handler to detect stack overflows.
  */
@@ -147,5 +142,6 @@ extern std::function<void(siginfo_t * info, void * ctx)> stackOverflowHandler;
  * logger. Exits the process immediately after.
  */
 void defaultStackOverflowHandler(siginfo_t * info, void * ctx);
+#endif
 
 }

@@ -41,7 +41,13 @@ typedef std::map<StorePath, WeakGoalPtr> WeakGoalMap;
  * of each category in parallel.
  */
 enum struct JobCategory {
+    /**
+     * A build of a derivation; it will use CPU and disk resources.
+     */
     Build,
+    /**
+     * A substitution an arbitrary store object; it will use network resources.
+     */
     Substitution,
 };
 
@@ -110,7 +116,7 @@ public:
      * sake of both privacy and determinism, and this "safe accessor"
      * ensures we don't.
      */
-    BuildResult getBuildResult(const DerivedPath &);
+    BuildResult getBuildResult(const DerivedPath &) const;
 
     /**
      * Exception containing an error message, if any.
@@ -132,19 +138,19 @@ public:
 
     virtual void waiteeDone(GoalPtr waitee, ExitCode result);
 
-    virtual void handleChildOutput(int fd, std::string_view data)
+    virtual void handleChildOutput(Descriptor fd, std::string_view data)
     {
         abort();
     }
 
-    virtual void handleEOF(int fd)
+    virtual void handleEOF(Descriptor fd)
     {
         abort();
     }
 
     void trace(std::string_view s);
 
-    std::string getName()
+    std::string getName() const
     {
         return name;
     }
@@ -162,7 +168,11 @@ public:
 
     virtual void cleanup() { }
 
-    virtual JobCategory jobCategory() = 0;
+    /**
+     * @brief Hint for the scheduler, which concurrency limit applies.
+     * @see JobCategory
+     */
+    virtual JobCategory jobCategory() const = 0;
 };
 
 void addToWeakGoals(WeakGoals & goals, GoalPtr p);

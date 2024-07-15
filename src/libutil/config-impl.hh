@@ -4,7 +4,7 @@
  *
  * Template implementations (as opposed to mere declarations).
  *
- * This file is an exmample of the "impl.hh" pattern. See the
+ * This file is an example of the "impl.hh" pattern. See the
  * contributing guide.
  *
  * One only needs to include this when one is declaring a
@@ -45,13 +45,13 @@ bool BaseSetting<T>::isAppendable()
     return trait::appendable;
 }
 
-template<> void BaseSetting<Strings>::appendOrSet(Strings && newValue, bool append);
-template<> void BaseSetting<StringSet>::appendOrSet(StringSet && newValue, bool append);
-template<> void BaseSetting<StringMap>::appendOrSet(StringMap && newValue, bool append);
-template<> void BaseSetting<std::set<ExperimentalFeature>>::appendOrSet(std::set<ExperimentalFeature> && newValue, bool append);
+template<> void BaseSetting<Strings>::appendOrSet(Strings newValue, bool append);
+template<> void BaseSetting<StringSet>::appendOrSet(StringSet newValue, bool append);
+template<> void BaseSetting<StringMap>::appendOrSet(StringMap newValue, bool append);
+template<> void BaseSetting<std::set<ExperimentalFeature>>::appendOrSet(std::set<ExperimentalFeature> newValue, bool append);
 
 template<typename T>
-void BaseSetting<T>::appendOrSet(T && newValue, bool append)
+void BaseSetting<T>::appendOrSet(T newValue, bool append)
 {
     static_assert(
         !trait::appendable,
@@ -116,10 +116,11 @@ T BaseSetting<T>::parse(const std::string & str) const
 {
     static_assert(std::is_integral<T>::value, "Integer required.");
 
-    if (auto n = string2Int<T>(str))
-        return *n;
-    else
+    try {
+        return string2IntWithUnitPrefix<T>(str);
+    } catch (...) {
         throw UsageError("setting '%s' has invalid value '%s'", name, str);
+    }
 }
 
 template<typename T>

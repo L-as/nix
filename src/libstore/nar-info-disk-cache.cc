@@ -1,10 +1,13 @@
 #include "nar-info-disk-cache.hh"
+#include "users.hh"
 #include "sync.hh"
 #include "sqlite.hh"
 #include "globals.hh"
 
 #include <sqlite3.h>
 #include <nlohmann/json.hpp>
+
+#include "strings.hh"
 
 namespace nix {
 
@@ -208,7 +211,7 @@ public:
 
             {
                 auto r(state->insertCache.use()(uri)(time(0))(storeDir)(wantMassQuery)(priority));
-                assert(r.next());
+                if (!r.next()) { abort(); }
                 ret.id = (int) r.getInt(0);
             }
 
@@ -332,9 +335,9 @@ public:
                     (std::string(info->path.name()))
                     (narInfo ? narInfo->url : "", narInfo != 0)
                     (narInfo ? narInfo->compression : "", narInfo != 0)
-                    (narInfo && narInfo->fileHash ? narInfo->fileHash->to_string(Base32, true) : "", narInfo && narInfo->fileHash)
+                    (narInfo && narInfo->fileHash ? narInfo->fileHash->to_string(HashFormat::Nix32, true) : "", narInfo && narInfo->fileHash)
                     (narInfo ? narInfo->fileSize : 0, narInfo != 0 && narInfo->fileSize)
-                    (info->narHash.to_string(Base32, true))
+                    (info->narHash.to_string(HashFormat::Nix32, true))
                     (info->narSize)
                     (concatStringsSep(" ", info->shortRefs()))
                     (info->deriver ? std::string(info->deriver->to_string()) : "", (bool) info->deriver)

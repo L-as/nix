@@ -2,34 +2,49 @@
 ///@file
 
 #include "attr-set.hh"
+#include "eval-error.hh"
 #include "types.hh"
 #include "value.hh"
 #include "nixexpr.hh"
 #include "symbol-table.hh"
 #include "config.hh"
 #include "experimental-features.hh"
-#include "input-accessor.hh"
+#include "position.hh"
+#include "pos-table.hh"
+#include "source-accessor.hh"
 #include "search-path.hh"
+#include "repl-exit-status.hh"
+#include "ref.hh"
 
 #include <map>
 #include <optional>
-#include <unordered_map>
-#include <mutex>
+#include <functional>
 
 namespace nix {
 
+/**
+ * We put a limit on primop arity because it lets us use a fixed size array on
+ * the stack. 8 is already an impractical number of arguments. Use an attrset
+ * argument for such overly complicated functions.
+ */
+constexpr size_t maxPrimOpArity = 8;
 
 class Store;
+namespace fetchers { struct Settings; }
+struct EvalSettings;
 class EvalState;
 class StorePath;
-struct DerivedPath;
+struct SingleDerivedPath;
 enum RepairFlag : bool;
-
+struct MemorySourceAccessor;
+namespace eval_cache {
+    class EvalCache;
+}
 
 /**
  * Function that implements a primop.
  */
-typedef void (* PrimOpFun) (EvalState & state, const PosIdx pos, Value * * args, Value & v);
+using PrimOpFun = void(EvalState & state, const PosIdx pos, Value * * args, Value & v);
 
 /**
  * Info about a primitive operation, and its implementation
@@ -61,15 +76,30 @@ struct PrimOp
     const char * doc = nullptr;
 
     /**
+     * Add a trace item, `while calling the '<name>' builtin`
+     *
+     * This is used to remove the redundant item for `builtins.addErrorContext`.
+     */
+    bool addTrace = true;
+
+    /**
      * Implementation of the primop.
      */
-    PrimOpFun fun;
+    std::function<PrimOpFun> fun;
 
     /**
      * Optional experimental for this to be gated on.
      */
     std::optional<ExperimentalFeature> experimentalFeature;
+
+    /**
+     * Validity check to be performed by functions that introduce primops,
+     * such as RegisterPrimOp() and Value::mkPrimOp().
+     */
+    void check();
 };
+
+std::ostream & operator<<(std::ostream & output, const PrimOp & primOp);
 
 /**
  * Info about a constant
@@ -103,11 +133,6 @@ struct Constant
 struct Env
 {
     Env * up;
-    /**
-     * Number of of levels up to next `with` environment
-     */
-    unsigned short prevWith:14;
-    enum { Plain = 0, HasWithExpr, HasWithAttrs } type:2;
     Value * values[0];
 };
 
@@ -119,14 +144,8 @@ std::unique_ptr<ValMap> mapStaticEnvBindings(const SymbolTable & st, const Stati
 void copyContext(const Value & v, NixStringContext & context);
 
 
-std::string printValue(const EvalState & state, const Value & v);
+std::string printValue(EvalState & state, Value & v);
 std::ostream & operator << (std::ostream & os, const ValueType t);
-
-
-/**
- * Initialise the Boehm GC, if applicable.
- */
-void initGC();
 
 
 struct RegexCache;
@@ -134,62 +153,28 @@ struct RegexCache;
 std::shared_ptr<RegexCache> makeRegexCache();
 
 struct DebugTrace {
-    std::shared_ptr<AbstractPos> pos;
+    std::shared_ptr<Pos> pos;
     const Expr & expr;
     const Env & env;
-    hintformat hint;
+    HintFmt hint;
     bool isError;
 };
-
-void debugError(Error * e, Env & env, Expr & expr);
-
-class ErrorBuilder
-{
-    private:
-        EvalState & state;
-        ErrorInfo info;
-
-        ErrorBuilder(EvalState & s, ErrorInfo && i): state(s), info(i) { }
-
-    public:
-        template<typename... Args>
-        [[nodiscard, gnu::noinline]]
-        static ErrorBuilder * create(EvalState & s, const Args & ... args)
-        {
-            return new ErrorBuilder(s, ErrorInfo { .msg = hintfmt(args...) });
-        }
-
-        [[nodiscard, gnu::noinline]]
-        ErrorBuilder & atPos(PosIdx pos);
-
-        [[nodiscard, gnu::noinline]]
-        ErrorBuilder & withTrace(PosIdx pos, const std::string_view text);
-
-        [[nodiscard, gnu::noinline]]
-        ErrorBuilder & withFrameTrace(PosIdx pos, const std::string_view text);
-
-        [[nodiscard, gnu::noinline]]
-        ErrorBuilder & withSuggestions(Suggestions & s);
-
-        [[nodiscard, gnu::noinline]]
-        ErrorBuilder & withFrame(const Env & e, const Expr & ex);
-
-        template<class ErrorType>
-        [[gnu::noinline, gnu::noreturn]]
-        void debugThrow();
-};
-
 
 class EvalState : public std::enable_shared_from_this<EvalState>
 {
 public:
+    const fetchers::Settings & fetchSettings;
+    const EvalSettings & settings;
     SymbolTable symbols;
     PosTable positions;
 
     const Symbol sWith, sOutPath, sDrvPath, sType, sMeta, sName, sValue,
         sSystem, sOverrides, sOutputs, sOutputName, sIgnoreNulls,
         sFile, sLine, sColumn, sFunctor, sToString,
-        sRight, sWrong, sStructuredAttrs, sBuilder, sArgs,
+        sRight, sWrong, sStructuredAttrs,
+        sAllowedReferences, sAllowedRequisites, sDisallowedReferences, sDisallowedRequisites,
+        sMaxSize, sMaxClosureSize,
+        sBuilder, sArgs,
         sContentAddressed, sImpure,
         sOutputHash, sOutputHashAlgo, sOutputHashMode,
         sRecurseForDerivations,
@@ -197,21 +182,70 @@ public:
         sPrefix,
         sOutputSpecified;
 
+    const Expr::AstSymbols exprSymbols;
+
     /**
      * If set, force copying files to the Nix store even if they
      * already exist there.
      */
     RepairFlag repair;
 
-    /**
-     * The allowed filesystem paths in restricted or pure evaluation
-     * mode.
-     */
-    std::optional<PathSet> allowedPaths;
-
     Bindings emptyBindings;
 
+    /**
+     * Empty list constant.
+     */
+    Value vEmptyList;
+
+    /**
+     * `null` constant.
+     *
+     * This is _not_ a singleton. Pointer equality is _not_ sufficient.
+     */
+    Value vNull;
+
+    /**
+     * `true` constant.
+     *
+     * This is _not_ a singleton. Pointer equality is _not_ sufficient.
+     */
+    Value vTrue;
+
+    /**
+     * `true` constant.
+     *
+     * This is _not_ a singleton. Pointer equality is _not_ sufficient.
+     */
+    Value vFalse;
+
+    /** `"regular"` */
+    Value vStringRegular;
+    /** `"directory"` */
+    Value vStringDirectory;
+    /** `"symlink"` */
+    Value vStringSymlink;
+    /** `"unknown"` */
+    Value vStringUnknown;
+
+    /**
+     * The accessor for the root filesystem.
+     */
+    const ref<SourceAccessor> rootFS;
+
+    /**
+     * The in-memory filesystem for <nix/...> paths.
+     */
+    const ref<MemorySourceAccessor> corepkgsFS;
+
+    /**
+     * In-memory filesystem for internal, non-user-callable Nix
+     * expressions like call-flake.nix.
+     */
+    const ref<MemorySourceAccessor> internalFS;
+
     const SourcePath derivationInternal;
+
+    const SourcePath callFlakeInternal;
 
     /**
      * Store used to materialise .drv files.
@@ -223,15 +257,14 @@ public:
      */
     const ref<Store> buildStore;
 
-    RootValue vCallFlake = nullptr;
     RootValue vImportedDrvToDerivation = nullptr;
 
     /**
      * Debugger
      */
-    void (* debugRepl)(ref<EvalState> es, const ValMap & extraEnv);
+    ReplExitStatus (* debugRepl)(ref<EvalState> es, const ValMap & extraEnv);
     bool debugStop;
-    bool debugQuit;
+    bool inDebugger = false;
     int trylevel;
     std::list<DebugTrace> debugTraces;
     std::map<const Expr*, const std::shared_ptr<const StaticEnv>> exprEnvs;
@@ -244,48 +277,37 @@ public:
             return std::shared_ptr<const StaticEnv>();;
     }
 
+    /** Whether a debug repl can be started. If `false`, `runDebugRepl(error)` will return without starting a repl. */
+    bool canDebug();
+
+    /** Use front of `debugTraces`; see `runDebugRepl(error,env,expr)` */
+    void runDebugRepl(const Error * error);
+
+    /**
+     * Run a debug repl with the given error, environment and expression.
+     * @param error The error to debug, may be nullptr.
+     * @param env The environment to debug, matching the expression.
+     * @param expr The expression to debug, matching the environment.
+     */
     void runDebugRepl(const Error * error, const Env & env, const Expr & expr);
 
-    template<class E>
-    [[gnu::noinline, gnu::noreturn]]
-    void debugThrowLastTrace(E && error)
-    {
-        debugThrow(error, nullptr, nullptr);
-    }
-
-    template<class E>
-    [[gnu::noinline, gnu::noreturn]]
-    void debugThrow(E && error, const Env * env, const Expr * expr)
-    {
-        if (debugRepl && ((env && expr) || !debugTraces.empty())) {
-            if (!env || !expr) {
-                const DebugTrace & last = debugTraces.front();
-                env = &last.env;
-                expr = &last.expr;
-            }
-            runDebugRepl(&error, *env, *expr);
-        }
-
-        throw std::move(error);
-    }
-
-    // This is dangerous, but gets in line with the idea that error creation and
-    // throwing should not allocate on the stack of hot functions.
-    // as long as errors are immediately thrown, it works.
-    ErrorBuilder * errorBuilder;
-
-    template<typename... Args>
+    template<class T, typename... Args>
     [[nodiscard, gnu::noinline]]
-    ErrorBuilder & error(const Args & ... args) {
-        errorBuilder = ErrorBuilder::create(*this, args...);
-        return *errorBuilder;
+    EvalErrorBuilder<T> & error(const Args & ... args) {
+        // `EvalErrorBuilder::debugThrow` performs the corresponding `delete`.
+        return *new EvalErrorBuilder<T>(*this, args...);
     }
+
+    /**
+     * A cache for evaluation caches, so as to reuse the same root value if possible
+     */
+    std::map<const Hash, ref<eval_cache::EvalCache>> evalCaches;
 
 private:
 
     /* Cache for calls to addToStore(); maps source paths to the store
        paths. */
-    std::map<SourcePath, StorePath> srcToStore;
+    Sync<std::map<SourcePath, StorePath>> srcToStore;
 
     /**
      * A cache from path names to parse trees.
@@ -307,14 +329,9 @@ private:
 #endif
     FileEvalCache fileEvalCache;
 
-    SearchPath searchPath;
+    LookupPath lookupPath;
 
-    std::map<std::string, std::optional<std::string>> searchPathResolved;
-
-    /**
-     * Cache used by checkSourcePath().
-     */
-    std::unordered_map<Path, SourcePath> resolvedPaths;
+    std::map<std::string, std::optional<std::string>> lookupPathResolved;
 
     /**
      * Cache used by prim_match().
@@ -336,20 +353,25 @@ private:
 public:
 
     EvalState(
-        const SearchPath & _searchPath,
+        const LookupPath & _lookupPath,
         ref<Store> store,
+        const fetchers::Settings & fetchSettings,
+        const EvalSettings & settings,
         std::shared_ptr<Store> buildStore = nullptr);
     ~EvalState();
 
-    void addToSearchPath(SearchPath::Elem && elem);
-
-    SearchPath getSearchPath() { return searchPath; }
+    LookupPath getLookupPath() { return lookupPath; }
 
     /**
      * Return a `SourcePath` that refers to `path` in the root
      * filesystem.
      */
     SourcePath rootPath(CanonPath path);
+
+    /**
+     * Variant which accepts relative paths too.
+     */
+    SourcePath rootPath(PathView path);
 
     /**
      * Allow access to a path.
@@ -366,12 +388,6 @@ public:
      * Allow access to a store path and return it as a string.
      */
     void allowAndSetStorePathString(const StorePath & storePath, Value & v);
-
-    /**
-     * Check whether access to a path is allowed and throw an error if
-     * not. Otherwise return the canonicalised path.
-     */
-    SourcePath checkSourcePath(const SourcePath & path);
 
     void checkURI(const std::string & uri);
 
@@ -407,32 +423,24 @@ public:
      */
     void evalFile(const SourcePath & path, Value & v, bool mustBeTrivial = false);
 
-    /**
-     * Like `evalFile`, but with an already parsed expression.
-     */
-    void cacheFile(
-        const SourcePath & path,
-        const SourcePath & resolvedPath,
-        Expr * e,
-        Value & v,
-        bool mustBeTrivial = false);
-
     void resetFileCache();
 
     /**
      * Look up a file in the search path.
      */
     SourcePath findFile(const std::string_view path);
-    SourcePath findFile(const SearchPath & searchPath, const std::string_view path, const PosIdx pos = noPos);
+    SourcePath findFile(const LookupPath & lookupPath, const std::string_view path, const PosIdx pos = noPos);
 
     /**
-     * Try to resolve a search path value (not the optinal key part)
+     * Try to resolve a search path value (not the optional key part).
      *
      * If the specified search path element is a URI, download it.
      *
      * If it is not found, return `std::nullopt`
      */
-    std::optional<std::string> resolveSearchPathPath(const SearchPath::Path & path);
+    std::optional<std::string> resolveLookupPathPath(
+        const LookupPath::Path & elem,
+        bool initAccessControl = false);
 
     /**
      * Evaluate an expression to normal form
@@ -457,8 +465,7 @@ public:
      */
     inline void forceValue(Value & v, const PosIdx pos);
 
-    template <typename Callable>
-    inline void forceValue(Value & v, Callable getPos);
+    void tryFixupBlackHolePos(Value & v, PosIdx pos);
 
     /**
      * Force a value, then recursively force list elements and
@@ -487,10 +494,12 @@ public:
     std::string_view forceString(Value & v, NixStringContext & context, const PosIdx pos, std::string_view errorCtx);
     std::string_view forceStringNoCtx(Value & v, const PosIdx pos, std::string_view errorCtx);
 
+    template<typename... Args>
     [[gnu::noinline]]
-    void addErrorTrace(Error & e, const char * s, const std::string & s2) const;
+    void addErrorTrace(Error & e, const Args & ... formatArgs) const;
+    template<typename... Args>
     [[gnu::noinline]]
-    void addErrorTrace(Error & e, const PosIdx pos, const char * s, const std::string & s2, bool frame = false) const;
+    void addErrorTrace(Error & e, const PosIdx pos, const Args & ... formatArgs) const;
 
 public:
     /**
@@ -532,12 +541,12 @@ public:
     StorePath coerceToStorePath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx);
 
     /**
-     * Part of `coerceToDerivedPath()` without any store IO which is exposed for unit testing only.
+     * Part of `coerceToSingleDerivedPath()` without any store IO which is exposed for unit testing only.
      */
-    std::pair<DerivedPath, std::string_view> coerceToDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx);
+    std::pair<SingleDerivedPath, std::string_view> coerceToSingleDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx);
 
     /**
-     * Coerce to `DerivedPath`.
+     * Coerce to `SingleDerivedPath`.
      *
      * Must be a string which is either a literal store path or a
      * "placeholder (see `DownstreamPlaceholder`).
@@ -551,7 +560,12 @@ public:
      * source of truth, and ultimately tells us what we want, and then
      * we ensure the string corresponds to it.
      */
-    DerivedPath coerceToDerivedPath(const PosIdx pos, Value & v, std::string_view errorCtx);
+    SingleDerivedPath coerceToSingleDerivedPath(const PosIdx pos, Value & v, std::string_view errorCtx);
+
+#if HAVE_BOEHMGC
+    /** A GC root for the baseEnv reference. */
+    std::shared_ptr<Env *> baseEnvP;
+#endif
 
 public:
 
@@ -620,6 +634,11 @@ private:
         const SourcePath & basePath,
         std::shared_ptr<StaticEnv> & staticEnv);
 
+    /**
+     * Current Nix call stack depth, used with `max-call-depth` setting to throw stack overflow hopefully before we run out of system stack.
+     */
+    size_t callDepth = 0;
+
 public:
 
     /**
@@ -651,9 +670,6 @@ public:
     inline Value * allocValue();
     inline Env & allocEnv(size_t size);
 
-    Value * allocAttr(Value & vAttrs, Symbol name);
-    Value * allocAttr(Value & vAttrs, std::string_view name);
-
     Bindings * allocBindings(size_t capacity);
 
     BindingsBuilder buildBindings(size_t capacity)
@@ -661,55 +677,117 @@ public:
         return BindingsBuilder(*this, allocBindings(capacity));
     }
 
-    void mkList(Value & v, size_t length);
+    ListBuilder buildList(size_t size)
+    {
+        return ListBuilder(*this, size);
+    }
+
+    /**
+     * Return a boolean `Value *` without allocating.
+     */
+    Value *getBool(bool b);
+
     void mkThunk_(Value & v, Expr * expr);
     void mkPos(Value & v, PosIdx pos);
 
     /**
      * Create a string representing a store path.
      *
-     * The string is the printed store path with a context containing a single
-     * `NixStringContextElem::Opaque` element of that store path.
+     * The string is the printed store path with a context containing a
+     * single `NixStringContextElem::Opaque` element of that store path.
      */
     void mkStorePathString(const StorePath & storePath, Value & v);
 
     /**
-     * Create a string representing a `DerivedPath::Built`.
+     * Create a string representing a `SingleDerivedPath::Built`.
      *
-     * The string is the printed store path with a context containing a single
-     * `NixStringContextElem::Built` element of the drv path and output name.
+     * The string is the printed store path with a context containing a
+     * single `NixStringContextElem::Built` element of the drv path and
+     * output name.
      *
      * @param value Value we are settings
      *
-     * @param drvPath Path the drv whose output we are making a string for
+     * @param b the drv whose output we are making a string for, and the
+     * output
      *
-     * @param outputName Name of the output
+     * @param optStaticOutputPath Optional output path for that string.
+     * Must be passed if and only if output store object is
+     * input-addressed or fixed output. Will be printed to form string
+     * if passed, otherwise a placeholder will be used (see
+     * `DownstreamPlaceholder`).
      *
-     * @param optOutputPath Optional output path for that string. Must
-     * be passed if and only if output store object is input-addressed.
-     * Will be printed to form string if passed, otherwise a placeholder
-     * will be used (see `DownstreamPlaceholder`).
+     * @param xpSettings Stop-gap to avoid globals during unit tests.
      */
     void mkOutputString(
         Value & value,
-        const StorePath & drvPath,
-        const std::string outputName,
-        std::optional<StorePath> optOutputPath);
-
-    void concatLists(Value & v, size_t nrLists, Value * * lists, const PosIdx pos, std::string_view errorCtx);
+        const SingleDerivedPath::Built & b,
+        std::optional<StorePath> optStaticOutputPath,
+        const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
 
     /**
-     * Print statistics.
+     * Create a string representing a `SingleDerivedPath`.
+     *
+     * A combination of `mkStorePathString` and `mkOutputString`.
      */
-    void printStats();
+    void mkSingleDerivedPathString(
+        const SingleDerivedPath & p,
+        Value & v);
+
+    void concatLists(Value & v, size_t nrLists, Value * const * lists, const PosIdx pos, std::string_view errorCtx);
 
     /**
-     * Realise the given context, and return a mapping from the placeholders
-     * used to construct the associated value to their final store path
+     * Print statistics, if enabled.
+     *
+     * Performs a full memory GC before printing the statistics, so that the
+     * GC statistics are more accurate.
      */
-    [[nodiscard]] StringMap realiseContext(const NixStringContext & context);
+    void maybePrintStats();
+
+    /**
+     * Print statistics, unconditionally, cheaply, without performing a GC first.
+     */
+    void printStatistics();
+
+    /**
+     * Perform a full memory garbage collection - not incremental.
+     *
+     * @return true if Nix was built with GC and a GC was performed, false if not.
+     *              The return value is currently not thread safe - just the return value.
+     */
+    bool fullGC();
+
+    /**
+     * Realise the given context
+     * @param[in] context the context to realise
+     * @param[out] maybePaths if not nullptr, all built or referenced store paths will be added to this set
+     * @return a mapping from the placeholders used to construct the associated value to their final store path.
+     */
+    [[nodiscard]] StringMap realiseContext(const NixStringContext & context, StorePathSet * maybePaths = nullptr, bool isIFD = true);
+
+    /* Call the binary path filter predicate used builtins.path etc. */
+    bool callPathFilter(
+        Value * filterFun,
+        const SourcePath & path,
+        std::string_view pathArg,
+        PosIdx pos);
 
 private:
+
+    /**
+     * Like `mkOutputString` but just creates a raw string, not an
+     * string Value, which would also have a string context.
+     */
+    std::string mkOutputStringRaw(
+        const SingleDerivedPath::Built & b,
+        std::optional<StorePath> optStaticOutputPath,
+        const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
+
+    /**
+     * Like `mkSingleDerivedPathStringRaw` but just creates a raw string
+     * Value, which would also have a string context.
+     */
+    std::string mkSingleDerivedPathStringRaw(
+        const SingleDerivedPath & p);
 
     unsigned long nrEnvs = 0;
     unsigned long nrValuesInEnvs = 0;
@@ -751,13 +829,13 @@ private:
     friend void prim_split(EvalState & state, const PosIdx pos, Value * * args, Value & v);
 
     friend struct Value;
+    friend class ListBuilder;
 };
 
 struct DebugTraceStacker {
     DebugTraceStacker(EvalState & evalState, DebugTrace t);
     ~DebugTraceStacker()
     {
-        // assert(evalState.debugTraces.front() == trace);
         evalState.debugTraces.pop_front();
     }
     EvalState & evalState;
@@ -775,118 +853,15 @@ std::string showType(const Value & v);
 
 /**
  * If `path` refers to a directory, then append "/default.nix".
+ *
+ * @param addDefaultNix Whether to append "/default.nix" after resolving symlinks.
  */
-SourcePath resolveExprPath(const SourcePath & path);
+SourcePath resolveExprPath(SourcePath path, bool addDefaultNix = true);
 
-struct InvalidPathError : EvalError
-{
-    Path path;
-    InvalidPathError(const Path & path);
-#ifdef EXCEPTION_NEEDS_THROW_SPEC
-    ~InvalidPathError() throw () { };
-#endif
-};
-
-struct EvalSettings : Config
-{
-    EvalSettings();
-
-    static Strings getDefaultNixPath();
-
-    static bool isPseudoUrl(std::string_view s);
-
-    static std::string resolvePseudoUrl(std::string_view url);
-
-    Setting<bool> enableNativeCode{this, false, "allow-unsafe-native-code-during-evaluation",
-        "Whether builtin functions that allow executing native code should be enabled."};
-
-    Setting<Strings> nixPath{
-        this, getDefaultNixPath(), "nix-path",
-        R"(
-          List of directories to be searched for `<...>` file references
-
-          In particular, outside of [pure evaluation mode](#conf-pure-evaluation), this determines the value of
-          [`builtins.nixPath`](@docroot@/language/builtin-constants.md#builtins-nixPath).
-        )"};
-
-    Setting<bool> restrictEval{
-        this, false, "restrict-eval",
-        R"(
-          If set to `true`, the Nix evaluator will not allow access to any
-          files outside of the Nix search path (as set via the `NIX_PATH`
-          environment variable or the `-I` option), or to URIs outside of
-          [`allowed-uris`](../command-ref/conf-file.md#conf-allowed-uris).
-          The default is `false`.
-        )"};
-
-    Setting<bool> pureEval{this, false, "pure-eval",
-        R"(
-          Pure evaluation mode ensures that the result of Nix expressions is fully determined by explicitly declared inputs, and not influenced by external state:
-
-          - Restrict file system and network access to files specified by cryptographic hash
-          - Disable [`bultins.currentSystem`](@docroot@/language/builtin-constants.md#builtins-currentSystem) and [`builtins.currentTime`](@docroot@/language/builtin-constants.md#builtins-currentTime)
-        )"
-        };
-
-    Setting<bool> enableImportFromDerivation{
-        this, true, "allow-import-from-derivation",
-        R"(
-          By default, Nix allows you to `import` from a derivation, allowing
-          building at evaluation time. With this option set to false, Nix will
-          throw an error when evaluating an expression that uses this feature,
-          allowing users to ensure their evaluation will not require any
-          builds to take place.
-        )"};
-
-    Setting<Strings> allowedUris{this, {}, "allowed-uris",
-        R"(
-          A list of URI prefixes to which access is allowed in restricted
-          evaluation mode. For example, when set to
-          `https://github.com/NixOS`, builtin functions such as `fetchGit` are
-          allowed to access `https://github.com/NixOS/patchelf.git`.
-        )"};
-
-    Setting<bool> traceFunctionCalls{this, false, "trace-function-calls",
-        R"(
-          If set to `true`, the Nix evaluator will trace every function call.
-          Nix will print a log message at the "vomit" level for every function
-          entrance and function exit.
-
-              function-trace entered undefined position at 1565795816999559622
-              function-trace exited undefined position at 1565795816999581277
-              function-trace entered /nix/store/.../example.nix:226:41 at 1565795253249935150
-              function-trace exited /nix/store/.../example.nix:226:41 at 1565795253249941684
-
-          The `undefined position` means the function call is a builtin.
-
-          Use the `contrib/stack-collapse.py` script distributed with the Nix
-          source code to convert the trace logs in to a format suitable for
-          `flamegraph.pl`.
-        )"};
-
-    Setting<bool> useEvalCache{this, true, "eval-cache",
-        "Whether to use the flake evaluation cache."};
-
-    Setting<bool> ignoreExceptionsDuringTry{this, false, "ignore-try",
-        R"(
-          If set to true, ignore exceptions inside 'tryEval' calls when evaluating nix expressions in
-          debug mode (using the --debugger flag). By default the debugger will pause on all exceptions.
-        )"};
-
-    Setting<bool> traceVerbose{this, false, "trace-verbose",
-        "Whether `builtins.traceVerbose` should trace its first argument when evaluated."};
-};
-
-extern EvalSettings evalSettings;
-
-static const std::string corepkgsPrefix{"/__corepkgs__/"};
-
-template<class ErrorType>
-void ErrorBuilder::debugThrow()
-{
-    // NOTE: We always use the -LastTrace version as we push the new trace in withFrame()
-    state.debugThrowLastTrace(ErrorType(info));
-}
+/**
+ * Whether a URI is allowed, assuming restrictEval is enabled
+ */
+bool isAllowedURI(std::string_view uri, const Strings & allowedPaths);
 
 }
 

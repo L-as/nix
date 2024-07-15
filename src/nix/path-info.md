@@ -26,8 +26,8 @@ R""(
 
   ```console
   # nix path-info --recursive --size --closure-size --human-readable nixpkgs#rustc
-  /nix/store/01rrgsg5zk3cds0xgdsq40zpk6g51dz9-ncurses-6.2-dev      386.7K   69.1M
-  /nix/store/0q783wnvixpqz6dxjp16nw296avgczam-libpfm-4.11.0          5.9M   37.4M
+  /nix/store/01rrgsg5zk3cds0xgdsq40zpk6g51dz9-ncurses-6.2-dev      386.7 KiB   69.1 MiB
+  /nix/store/0q783wnvixpqz6dxjp16nw296avgczam-libpfm-4.11.0          5.9 MiB   37.4 MiB
   …
   ```
 
@@ -43,7 +43,7 @@ R""(
   command):
 
   ```console
-  # nix path-info --json --all | jq -r 'sort_by(.registrationTime)[-11:-1][].path'
+  # nix path-info --json --all | jq -r 'to_entries | sort_by(.value.registrationTime) | .[-11:-1][] | .key'
   ```
 
 * Show the size of the entire Nix store:
@@ -58,19 +58,19 @@ R""(
 
   ```console
   # nix path-info --json --all --closure-size \
-    | jq 'map(select(.closureSize > 1e9)) | sort_by(.closureSize) | map([.path, .closureSize])'
+    | jq 'map_values(.closureSize | select(. < 1e9)) | to_entries | sort_by(.value)'
   [
     …,
-    [
-      "/nix/store/zqamz3cz4dbzfihki2mk7a63mbkxz9xq-nixos-system-machine-20.09.20201112.3090c65",
-      5887562256
-    ]
+    {
+      .key = "/nix/store/zqamz3cz4dbzfihki2mk7a63mbkxz9xq-nixos-system-machine-20.09.20201112.3090c65",
+      .value = 5887562256,
+    }
   ]
   ```
 
 * Print the path of the [store derivation] produced by `nixpkgs#hello`:
 
-  [store derivation]: ../../glossary.md#gloss-store-derivation
+  [store derivation]: @docroot@/glossary.md#gloss-store-derivation
 
   ```console
   # nix path-info --derivation nixpkgs#hello

@@ -25,37 +25,47 @@
 | Inequality                             | *expr* `!=` *expr*                         | none          | 11         |
 | Logical conjunction (`AND`)            | *bool* `&&` *bool*                         | left          | 12         |
 | Logical disjunction (`OR`)             | *bool* <code>\|\|</code> *bool*            | left          | 13         |
-| [Logical implication]                  | *bool* `->` *bool*                         | none          | 14         |
+| [Logical implication]                  | *bool* `->` *bool*                         | right         | 14         |
 
-[string]: ./values.md#type-string
-[path]: ./values.md#type-path
-[number]: ./values.md#type-number
-[list]: ./values.md#list
-[attribute set]: ./values.md#attribute-set
+[string]: ./types.md#type-string
+[path]: ./types.md#type-path
+[number]: ./types.md#type-float <!-- TODO(@rhendric, #10970): rationalize this -->
+[list]: ./types.md#list
+[attribute set]: ./types.md#attribute-set
 
 ## Attribute selection
 
+> **Syntax**
+>
 > *attrset* `.` *attrpath* \[ `or` *expr* \]
 
 Select the attribute denoted by attribute path *attrpath* from [attribute set] *attrset*.
 If the attribute doesn’t exist, return the *expr* after `or` if provided, otherwise abort evaluation.
 
-An attribute path is a dot-separated list of [attribute names](./values.md#attribute-set).
+An attribute path is a dot-separated list of [attribute names](./types.md#attribute-set).
 
+> **Syntax**
+>
 > *attrpath* = *name* [ `.` *name* ]...
 
 [Attribute selection]: #attribute-selection
 
 ## Has attribute
 
+> **Syntax**
+>
 > *attrset* `?` *attrpath*
 
 Test whether [attribute set] *attrset* contains the attribute denoted by *attrpath*.
 The result is a [Boolean] value.
 
-[Boolean]: ./values.md#type-boolean
+See also: [`builtins.hasAttr`](@docroot@/language/builtins.md#builtins-hasAttr)
+
+[Boolean]: ./types.md#type-boolean
 
 [Has attribute]: #has-attribute
+
+After evaluating *attrset* and *attrpath*, the computational complexity is O(log(*n*)) for *n* attributes in the *attrset*
 
 ## Arithmetic
 
@@ -70,23 +80,29 @@ The `+` operator is overloaded to also work on strings and paths.
 
 ## String concatenation
 
+> **Syntax**
+>
 > *string* `+` *string*
 
-Concatenate two [string]s and merge their string contexts.
+Concatenate two [strings][string] and merge their string contexts.
 
 [String concatenation]: #string-concatenation
 
 ## Path concatenation
 
+> **Syntax**
+>
 > *path* `+` *path*
 
-Concatenate two [path]s.
+Concatenate two [paths][path].
 The result is a path.
 
 [Path concatenation]: #path-concatenation
 
 ## Path and string concatenation
 
+> **Syntax**
+>
 > *path* + *string*
 
 Concatenate *[path]* with *[string]*.
@@ -100,6 +116,8 @@ The result is a path.
 
 ## String and path concatenation
 
+> **Syntax**
+>
 > *string* + *path*
 
 Concatenate *[string]* with *[path]*.
@@ -110,18 +128,20 @@ The result is a string.
 > The file or directory at *path* must exist and is copied to the [store].
 > The path appears in the result as the corresponding [store path].
 
-[store path]: ../glossary.md#gloss-store-path
-[store]: ../glossary.md#gloss-store
+[store path]: @docroot@/store/store-path.md
+[store]: @docroot@/glossary.md#gloss-store
 
 [String and path concatenation]: #string-and-path-concatenation
 
 ## Update
 
+> **Syntax**
+>
 > *attrset1* // *attrset2*
 
 Update [attribute set] *attrset1* with names and values from *attrset2*.
 
-The returned attribute set will have of all the attributes in *attrset1* and *attrset2*.
+The returned attribute set will have all of the attributes in *attrset1* and *attrset2*.
 If an attribute name is present in both, the attribute value from the latter is taken.
 
 [Update]: #update
@@ -130,9 +150,9 @@ If an attribute name is present in both, the attribute value from the latter is 
 
 Comparison is
 
-- [arithmetic] for [number]s
-- lexicographic for [string]s and [path]s
-- item-wise lexicographic for [list]s:
+- [arithmetic] for [numbers][number]
+- lexicographic for [strings][string] and [paths][path]
+- item-wise lexicographic for [lists][list]:
   elements at the same index in both lists are compared according to their type and skipped if they are equal.
 
 All comparison operators are implemented in terms of `<`, and the following equivalencies hold:
@@ -143,16 +163,16 @@ All comparison operators are implemented in terms of `<`, and the following equi
 | *a* `>`  *b* |       *b* `<` *a*     |
 | *a* `>=` *b* | `! (` *a* `<` *b* `)` |
 
-[Comparison]: #comparison-operators
+[Comparison]: #comparison
 
 ## Equality
 
-- [Attribute sets][attribute set] and [list]s are compared recursively, and therefore are fully evaluated.
-- Comparison of [function]s always returns `false`.
+- [Attribute sets][attribute set] and [lists][list] are compared recursively, and therefore are fully evaluated.
+- Comparison of [functions][function] always returns `false`.
 - Numbers are type-compatible, see [arithmetic] operators.
 - Floating point numbers only differ up to a limited precision.
 
-[function]: ./constructs.md#functions
+[function]: ./syntax.md#functions
 
 [Equality]: #equality
 

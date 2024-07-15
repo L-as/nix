@@ -2,7 +2,9 @@
 ///@file
 
 #include "parsed-derivations.hh"
-#include "lock.hh"
+#ifndef _WIN32
+#  include "user-lock.hh"
+#endif
 #include "outputs-spec.hh"
 #include "store-api.hh"
 #include "pathlocks.hh"
@@ -12,7 +14,9 @@ namespace nix {
 
 using std::map;
 
+#ifndef _WIN32 // TODO enable build hook on Windows
 struct HookInstance;
+#endif
 
 typedef enum {rpAccept, rpDecline, rpPostpone} HookReply;
 
@@ -50,6 +54,9 @@ struct InitialOutput {
     std::optional<InitialOutputStatus> known;
 };
 
+/**
+ * A goal for building some or all of the outputs of a derivation.
+ */
 struct DerivationGoal : public Goal
 {
     /**
@@ -66,8 +73,7 @@ struct DerivationGoal : public Goal
     std::shared_ptr<DerivationGoal> resolvedDrvGoal;
 
     /**
-     * The specific outputs that we need to build.  Empty means all of
-     * them.
+     * The specific outputs that we need to build.
      */
     OutputsSpec wantedOutputs;
 
@@ -176,15 +182,17 @@ struct DerivationGoal : public Goal
 
     std::string currentHookLine;
 
+#ifndef _WIN32 // TODO enable build hook on Windows
     /**
      * The build hook.
      */
     std::unique_ptr<HookInstance> hook;
+#endif
 
     /**
      * The sort of derivation we are building.
      */
-    DerivationType derivationType;
+    std::optional<DerivationType> derivationType;
 
     typedef void (DerivationGoal::*GoalState)();
     GoalState state;
@@ -285,13 +293,13 @@ struct DerivationGoal : public Goal
     virtual void cleanupPostOutputsRegisteredModeCheck();
     virtual void cleanupPostOutputsRegisteredModeNonCheck();
 
-    virtual bool isReadDesc(int fd);
+    virtual bool isReadDesc(Descriptor fd);
 
     /**
      * Callback used by the worker to write to the log.
      */
-    void handleChildOutput(int fd, std::string_view data) override;
-    void handleEOF(int fd) override;
+    void handleChildOutput(Descriptor fd, std::string_view data) override;
+    void handleEOF(Descriptor fd) override;
     void flushLine();
 
     /**
@@ -334,7 +342,9 @@ struct DerivationGoal : public Goal
 
     StorePathSet exportReferences(const StorePathSet & storePaths);
 
-    JobCategory jobCategory() override { return JobCategory::Build; };
+    JobCategory jobCategory() const override {
+        return JobCategory::Build;
+    };
 };
 
 MakeError(NotDeterministic, BuildError);

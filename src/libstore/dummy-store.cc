@@ -18,9 +18,12 @@ struct DummyStoreConfig : virtual StoreConfig {
 
 struct DummyStore : public virtual DummyStoreConfig, public virtual Store
 {
-    DummyStore(const std::string scheme, const std::string uri, const Params & params)
+    DummyStore(std::string_view scheme, std::string_view authority, const Params & params)
         : DummyStore(params)
-    { }
+    {
+        if (!authority.empty())
+            throw UsageError("`%s` store URIs must not contain an authority part %s", scheme, authority);
+    }
 
     DummyStore(const Params & params)
         : StoreConfig(params)
@@ -58,12 +61,15 @@ struct DummyStore : public virtual DummyStoreConfig, public virtual Store
         RepairFlag repair, CheckSigsFlag checkSigs) override
     { unsupported("addToStore"); }
 
-    StorePath addTextToStore(
+    virtual StorePath addToStoreFromDump(
+        Source & dump,
         std::string_view name,
-        std::string_view s,
-        const StorePathSet & references,
-        RepairFlag repair) override
-    { unsupported("addTextToStore"); }
+        FileSerialisationMethod dumpMethod = FileSerialisationMethod::NixArchive,
+        ContentAddressMethod hashMethod = FileIngestionMethod::NixArchive,
+        HashAlgorithm hashAlgo = HashAlgorithm::SHA256,
+        const StorePathSet & references = StorePathSet(),
+        RepairFlag repair = NoRepair) override
+    { unsupported("addToStore"); }
 
     void narFromPath(const StorePath & path, Sink & sink) override
     { unsupported("narFromPath"); }
@@ -72,7 +78,7 @@ struct DummyStore : public virtual DummyStoreConfig, public virtual Store
         Callback<std::shared_ptr<const Realisation>> callback) noexcept override
     { callback(nullptr); }
 
-    virtual ref<FSAccessor> getFSAccessor() override
+    virtual ref<SourceAccessor> getFSAccessor(bool requireValidPath) override
     { unsupported("getFSAccessor"); }
 };
 

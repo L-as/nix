@@ -100,6 +100,9 @@ struct BuildResult
      */
     std::optional<std::chrono::microseconds> cpuUser, cpuSystem;
 
+    bool operator ==(const BuildResult &) const noexcept;
+    std::strong_ordering operator <=>(const BuildResult &) const noexcept;
+
     bool success()
     {
         return status == Built || status == Substituted || status == AlreadyValid || status == ResolvesToAlreadyValid;
@@ -120,6 +123,11 @@ struct KeyedBuildResult : BuildResult
      * The derivation we built or the store path we substituted.
      */
     DerivedPath path;
+
+    // Hack to work around a gcc "may be used uninitialized" warning.
+    KeyedBuildResult(BuildResult res, DerivedPath path)
+        : BuildResult(std::move(res)), path(std::move(path))
+    { }
 };
 
 }

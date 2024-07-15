@@ -1,9 +1,16 @@
 #include "ssh.hh"
 #include "finally.hh"
+#include "current-process.hh"
+#include "environment-variables.hh"
+#include "util.hh"
 
 namespace nix {
 
-SSHMaster::SSHMaster(const std::string & host, const std::string & keyFile, const std::string & sshPublicHostKey, bool useMaster, bool compress, int logFD)
+SSHMaster::SSHMaster(
+    std::string_view host,
+    std::string_view keyFile,
+    std::string_view sshPublicHostKey,
+    bool useMaster, bool compress, Descriptor logFD)
     : host(host)
     , fakeSSH(host == "localhost")
     , keyFile(keyFile)
@@ -28,11 +35,11 @@ void SSHMaster::addCommonSSHOpts(Strings & args)
     if (!keyFile.empty())
         args.insert(args.end(), {"-i", keyFile});
     if (!sshPublicHostKey.empty()) {
-        Path fileName = (Path) *state->tmpDir + "/host-key";
+        std::filesystem::path fileName = state->tmpDir->path() / "host-key";
         auto p = host.rfind("@");
         std::string thost = p != std::string::npos ? std::string(host, p + 1) : host;
-        writeFile(fileName, thost + " " + base64Decode(sshPublicHostKey) + "\n");
-        args.insert(args.end(), {"-oUserKnownHostsFile=" + fileName});
+        writeFile(fileName.string(), thost + " " + base64Decode(sshPublicHostKey) + "\n");
+        args.insert(args.end(), {"-oUserKnownHostsFile=" + fileName.string()});
     }
     if (compress)
         args.push_back("-C");
@@ -49,8 +56,12 @@ bool SSHMaster::isMasterRunning() {
     return res.first == 0;
 }
 
-std::unique_ptr<SSHMaster::Connection> SSHMaster::startCommand(const std::string & command)
+std::unique_ptr<SSHMaster::Connection> SSHMaster::startCommand(
+    Strings && command, Strings && extraSshArgs)
 {
+#ifdef _WIN32 // TODO re-enable on Windows, once we can start processes.
+    throw UnimplementedError("cannot yet SSH on windows because spawning processes is not yet implemented");
+#else
     Path socketPath = startMaster();
 
     Pipe in, out;
@@ -81,18 +92,19 @@ std::unique_ptr<SSHMaster::Connection> SSHMaster::startCommand(const std::string
 
         Strings args;
 
-        if (fakeSSH) {
-            args = { "bash", "-c" };
-        } else {
+        if (!fakeSSH) {
             args = { "ssh", host.c_str(), "-x" };
             addCommonSSHOpts(args);
             if (socketPath != "")
                 args.insert(args.end(), {"-S", socketPath});
             if (verbosity >= lvlChatty)
                 args.push_back("-v");
+            args.splice(args.end(), std::move(extraSshArgs));
+            args.push_back("--");
         }
 
-        args.push_back(command);
+        args.splice(args.end(), std::move(command));
+
         execvp(args.begin()->c_str(), stringsToCharPtrs(args).data());
 
         // could not exec ssh/bash
@@ -100,8 +112,8 @@ std::unique_ptr<SSHMaster::Connection> SSHMaster::startCommand(const std::string
     }, options);
 
 
-    in.readSide = -1;
-    out.writeSide = -1;
+    in.readSide = INVALID_DESCRIPTOR;
+    out.writeSide = INVALID_DESCRIPTOR;
 
     // Wait for the SSH connection to be established,
     // So that we don't overwrite the password prompt with our progress bar.
@@ -111,15 +123,20 @@ std::unique_ptr<SSHMaster::Connection> SSHMaster::startCommand(const std::string
             reply = readLine(out.readSide.get());
         } catch (EndOfFile & e) { }
 
-        if (reply != "started")
+        if (reply != "started") {
+            printTalkative("SSH stdout first line: %s", reply);
             throw Error("failed to start SSH connection to '%s'", host);
+        }
     }
 
     conn->out = std::move(out.readSide);
     conn->in = std::move(in.writeSide);
 
     return conn;
+#endif
 }
+
+#ifndef _WIN32 // TODO re-enable on Windows, once we can start processes.
 
 Path SSHMaster::startMaster()
 {
@@ -127,8 +144,7 @@ Path SSHMaster::startMaster()
 
     auto state(state_.lock());
 
-    if (state->sshMaster != -1) return state->socketPath;
-
+    if (state->sshMaster != INVALID_DESCRIPTOR) return state->socketPath;
 
     state->socketPath = (Path) *state->tmpDir + "/ssh.sock";
 
@@ -141,7 +157,8 @@ Path SSHMaster::startMaster()
     logger->pause();
     Finally cleanup = [&]() { logger->resume(); };
 
-    bool wasMasterRunning = isMasterRunning();
+    if (isMasterRunning())
+        return state->socketPath;
 
     state->sshMaster = startProcess([&]() {
         restoreProcessContext();
@@ -160,19 +177,21 @@ Path SSHMaster::startMaster()
         throw SysError("unable to execute '%s'", args.front());
     }, options);
 
-    out.writeSide = -1;
+    out.writeSide = INVALID_DESCRIPTOR;
 
-    if (!wasMasterRunning) {
-        std::string reply;
-        try {
-            reply = readLine(out.readSide.get());
-        } catch (EndOfFile & e) { }
+    std::string reply;
+    try {
+        reply = readLine(out.readSide.get());
+    } catch (EndOfFile & e) { }
 
-        if (reply != "started")
-            throw Error("failed to start SSH master connection to '%s'", host);
+    if (reply != "started") {
+        printTalkative("SSH master stdout first line: %s", reply);
+        throw Error("failed to start SSH master connection to '%s'", host);
     }
 
     return state->socketPath;
 }
+
+#endif
 
 }

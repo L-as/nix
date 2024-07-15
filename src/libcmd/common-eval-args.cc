@@ -1,15 +1,56 @@
+#include "fetch-settings.hh"
+#include "eval-settings.hh"
 #include "common-eval-args.hh"
 #include "shared.hh"
+#include "config-global.hh"
 #include "filetransfer.hh"
-#include "util.hh"
 #include "eval.hh"
 #include "fetchers.hh"
 #include "registry.hh"
 #include "flake/flakeref.hh"
+#include "flake/settings.hh"
 #include "store-api.hh"
 #include "command.hh"
+#include "tarball.hh"
+#include "fetch-to-store.hh"
+#include "compatibility-settings.hh"
+#include "eval-settings.hh"
 
 namespace nix {
+
+fetchers::Settings fetchSettings;
+
+static GlobalConfig::Register rFetchSettings(&fetchSettings);
+
+EvalSettings evalSettings {
+    settings.readOnlyMode,
+    {
+        {
+            "flake",
+            [](ref<Store> store, std::string_view rest) {
+                experimentalFeatureSettings.require(Xp::Flakes);
+                // FIXME `parseFlakeRef` should take a `std::string_view`.
+                auto flakeRef = parseFlakeRef(fetchSettings, std::string { rest }, {}, true, false);
+                debug("fetching flake search path element '%s''", rest);
+                auto storePath = flakeRef.resolve(store).fetchTree(store).first;
+                return store->toRealPath(storePath);
+            },
+        },
+    },
+};
+
+static GlobalConfig::Register rEvalSettings(&evalSettings);
+
+
+flake::Settings flakeSettings;
+
+static GlobalConfig::Register rFlakeSettings(&flakeSettings);
+
+
+CompatibilitySettings compatibilitySettings {};
+
+static GlobalConfig::Register rCompatibilitySettings(&compatibilitySettings);
+
 
 MixEvalArgs::MixEvalArgs()
 {
@@ -18,7 +59,7 @@ MixEvalArgs::MixEvalArgs()
         .description = "Pass the value *expr* as the argument *name* to Nix functions.",
         .category = category,
         .labels = {"name", "expr"},
-        .handler = {[&](std::string name, std::string expr) { autoArgs[name] = 'E' + expr; }}
+        .handler = {[&](std::string name, std::string expr) { autoArgs.insert_or_assign(name, AutoArg{AutoArgExpr{expr}}); }}
     });
 
     addFlag({
@@ -26,7 +67,24 @@ MixEvalArgs::MixEvalArgs()
         .description = "Pass the string *string* as the argument *name* to Nix functions.",
         .category = category,
         .labels = {"name", "string"},
-        .handler = {[&](std::string name, std::string s) { autoArgs[name] = 'S' + s; }},
+        .handler = {[&](std::string name, std::string s) { autoArgs.insert_or_assign(name, AutoArg{AutoArgString{s}}); }},
+    });
+
+    addFlag({
+        .longName = "arg-from-file",
+        .description = "Pass the contents of file *path* as the argument *name* to Nix functions.",
+        .category = category,
+        .labels = {"name", "path"},
+        .handler = {[&](std::string name, std::string path) { autoArgs.insert_or_assign(name, AutoArg{AutoArgFile{path}}); }},
+        .completer = completePath
+    });
+
+    addFlag({
+        .longName = "arg-from-stdin",
+        .description = "Pass the contents of stdin as the argument *name* to Nix functions.",
+        .category = category,
+        .labels = {"name"},
+        .handler = {[&](std::string name) { autoArgs.insert_or_assign(name, AutoArg{AutoArgStdin{}}); }},
     });
 
     addFlag({
@@ -35,7 +93,7 @@ MixEvalArgs::MixEvalArgs()
         .description = R"(
   Add *path* to the Nix search path. The Nix search path is
   initialized from the colon-separated [`NIX_PATH`](@docroot@/command-ref/env-common.md#env-NIX_PATH) environment
-  variable, and is used to look up the location of Nix expressions using [paths](@docroot@/language/values.md#type-path) enclosed in angle
+  variable, and is used to look up the location of Nix expressions using [paths](@docroot@/language/types.md#type-path) enclosed in angle
   brackets (i.e., `<nixpkgs>`).
 
   For instance, passing
@@ -106,7 +164,7 @@ MixEvalArgs::MixEvalArgs()
         .category = category,
         .labels = {"path"},
         .handler = {[&](std::string s) {
-            searchPath.elements.emplace_back(SearchPath::Elem::parse(s));
+            lookupPath.elements.emplace_back(LookupPath::Elem::parse(s));
         }}
     });
 
@@ -125,14 +183,14 @@ MixEvalArgs::MixEvalArgs()
         .category = category,
         .labels = {"original-ref", "resolved-ref"},
         .handler = {[&](std::string _from, std::string _to) {
-            auto from = parseFlakeRef(_from, absPath("."));
-            auto to = parseFlakeRef(_to, absPath("."));
+            auto from = parseFlakeRef(fetchSettings, _from, absPath("."));
+            auto to = parseFlakeRef(fetchSettings, _to, absPath("."));
             fetchers::Attrs extraAttrs;
             if (to.subdir != "") extraAttrs["dir"] = to.subdir;
             fetchers::overrideRegistry(from.input, to.input, extraAttrs);
         }},
-        .completer = {[&](size_t, std::string_view prefix) {
-            completeFlakeRef(openStore(), prefix);
+        .completer = {[&](AddCompletions & completions, size_t, std::string_view prefix) {
+            completeFlakeRef(completions, openStore(), prefix);
         }}
     });
 
@@ -140,7 +198,7 @@ MixEvalArgs::MixEvalArgs()
         .longName = "eval-store",
         .description =
           R"(
-            The [URL of the Nix store](@docroot@/command-ref/new-cli/nix3-help-stores.md#store-url-format)
+            The [URL of the Nix store](@docroot@/store/types/index.md#store-url-format)
             to use for evaluation, i.e. to store derivations (`.drv` files) and inputs referenced by them.
           )",
         .category = category,
@@ -152,29 +210,40 @@ MixEvalArgs::MixEvalArgs()
 Bindings * MixEvalArgs::getAutoArgs(EvalState & state)
 {
     auto res = state.buildBindings(autoArgs.size());
-    for (auto & i : autoArgs) {
+    for (auto & [name, arg] : autoArgs) {
         auto v = state.allocValue();
-        if (i.second[0] == 'E')
-            state.mkThunk_(*v, state.parseExprFromString(i.second.substr(1), state.rootPath(CanonPath::fromCwd())));
-        else
-            v->mkString(((std::string_view) i.second).substr(1));
-        res.insert(state.symbols.create(i.first), v);
+        std::visit(overloaded {
+            [&](const AutoArgExpr & arg) {
+                state.mkThunk_(*v, state.parseExprFromString(arg.expr, state.rootPath(".")));
+            },
+            [&](const AutoArgString & arg) {
+                v->mkString(arg.s);
+            },
+            [&](const AutoArgFile & arg) {
+                v->mkString(readFile(arg.path.string()));
+            },
+            [&](const AutoArgStdin & arg) {
+                v->mkString(readFile(STDIN_FILENO));
+            }
+        }, arg);
+        res.insert(state.symbols.create(name), v);
     }
     return res.finish();
 }
 
-SourcePath lookupFileArg(EvalState & state, std::string_view s)
+SourcePath lookupFileArg(EvalState & state, std::string_view s, const Path * baseDir)
 {
     if (EvalSettings::isPseudoUrl(s)) {
-        auto storePath = fetchers::downloadTarball(
-            state.store, EvalSettings::resolvePseudoUrl(s), "source", false).tree.storePath;
+        auto accessor = fetchers::downloadTarball(
+            EvalSettings::resolvePseudoUrl(s)).accessor;
+        auto storePath = fetchToStore(*state.store, SourcePath(accessor), FetchMode::Copy);
         return state.rootPath(CanonPath(state.store->toRealPath(storePath)));
     }
 
     else if (hasPrefix(s, "flake:")) {
         experimentalFeatureSettings.require(Xp::Flakes);
-        auto flakeRef = parseFlakeRef(std::string(s.substr(6)), {}, true, false);
-        auto storePath = flakeRef.resolve(state.store).fetchTree(state.store).first.storePath;
+        auto flakeRef = parseFlakeRef(fetchSettings, std::string(s.substr(6)), {}, true, false);
+        auto storePath = flakeRef.resolve(state.store).fetchTree(state.store).first;
         return state.rootPath(CanonPath(state.store->toRealPath(storePath)));
     }
 
@@ -184,7 +253,7 @@ SourcePath lookupFileArg(EvalState & state, std::string_view s)
     }
 
     else
-        return state.rootPath(CanonPath::fromCwd(s));
+        return state.rootPath(baseDir ? absPath(s, *baseDir) : absPath(s));
 }
 
 }

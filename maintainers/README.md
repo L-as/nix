@@ -2,7 +2,7 @@
 
 ## Motivation
 
-The team's main responsibility is to set a direction for the development of Nix and ensure that the code is in good shape.
+The team's main responsibility is to guide and direct the development of Nix and ensure that the code is in good shape.
 
 We aim to achieve this by improving the contributor experience and attracting more maintainers – that is, by helping other people contributing to Nix and eventually taking responsibility – in order to scale the development process to match users' needs.
 
@@ -30,27 +30,38 @@ We aim to achieve this by improving the contributor experience and attracting mo
 ## Members
 
 - Eelco Dolstra (@edolstra) – Team lead
-- Théophane Hufschmitt (@thufschmitt)
 - Valentin Gagarin (@fricklerhandwerk)
 - Thomas Bereknyei (@tomberek)
 - Robert Hensing (@roberth)
 - John Ericson (@Ericson2314)
 
+The team is on Github as [@NixOS/nix-team](https://github.com/orgs/NixOS/teams/nix-team).
+
 ## Meeting protocol
 
-The team meets twice a week:
+The team meets twice a week (times are denoted in the [Europe/Amsterdam](https://en.m.wikipedia.org/wiki/Time_in_the_Netherlands) time zone):
 
-- Discussion meeting: [Fridays 13:00-14:00 CET](https://calendar.google.com/calendar/event?eid=MHNtOGVuNWtrZXNpZHR2bW1sM3QyN2ZjaGNfMjAyMjExMjVUMTIwMDAwWiBiOW81MmZvYnFqYWs4b3E4bGZraGczdDBxZ0Bn)
+- Discussion meeting: [Wednesday 21:00-22:00 Europe/Amsterdam](https://www.google.com/calendar/event?eid=ZG5rZzNyajRjajducGV2NGY5aGkzYWIwdnJfMjAyNDA1MDhUMTkwMDAwWiBiOW81MmZvYnFqYWs4b3E4bGZraGczdDBxZ0Bn)
 
   1. Triage issues and pull requests from the [No Status](#no-status) column (30 min)
-  2. Discuss issues and pull requests from the [To discuss](#to-discuss) column (30 min)
+  2. Discuss issues and pull requests from the [To discuss](#to-discuss) column (30 min).
+     Once a month, each team member checks the [Assigned](#assigned) column for prs/issues assigned to them, to either
+       - unblock it by providing input
+       - mark it as draft if it is blocked on the contributor
+       - escalate it back to the team by moving it to To discuss, and leaving a comment as to why the issue needs to be discussed again.
 
-- Work meeting: [Mondays 13:00-15:00 CET](https://calendar.google.com/calendar/event?eid=NTM1MG1wNGJnOGpmOTZhYms3bTB1bnY5cWxfMjAyMjExMjFUMTIwMDAwWiBiOW81MmZvYnFqYWs4b3E4bGZraGczdDBxZ0Bn)
+- Work meeting: [Mondays 13:00-15:00 Europe/Amsterdam](https://www.google.com/calendar/event?eid=Ym52NDdzYnRic2NzcDcybjZiNDhpNzhpa3NfMjAyNDA1MTNUMTIwMDAwWiBiOW81MmZvYnFqYWs4b3E4bGZraGczdDBxZ0Bn)
 
   1. Code review on pull requests from [In review](#in-review).
   2. Other chores and tasks.
 
-Meeting notes are collected on a [collaborative scratchpad](https://pad.lassul.us/Cv7FpYx-Ri-4VjUykQOLAw), and published on Discourse under the [Nix category](https://discourse.nixos.org/c/dev/nix/50).
+Meeting notes are collected on a [collaborative scratchpad](https://pad.lassul.us/Cv7FpYx-Ri-4VjUykQOLAw).
+Notes on issues and pull requests are posted as comments and linked from the meeting notes, so they are can be found from both places.
+[All meeting notes](https://discourse.nixos.org/search?expanded=true&q=Nix%20team%20meeting%20minutes%20%23%20%23dev%3Anix%20in%3Atitle%20order%3Alatest_topic) are published on Discourse under the [Nix category](https://discourse.nixos.org/c/dev/nix/50).
+
+Team meetings are generally open to anyone interested.
+We can make exceptions to discuss sensitive issues, such as security incidents or people matters.
+Contact any team member to get a calendar invite for reminders and updates.
 
 ## Project board protocol
 
@@ -96,8 +107,10 @@ What constitutes a trivial pull request is up to maintainers' judgement.
 Pull requests and issues that are deemed important and controversial are discussed by the team during discussion meetings.
 
 This may be where the merit of the change itself or the implementation strategy is contested by a team member.
+Whenever the discussion opens up questions about the process or this team's goals, this may indicate that the change is too large in scope.
+In that case it is taken off the board to be reconsidered by the author or broken down into smaller pieces that are less far-reaching and can be reviewed independently.
 
-As a general guideline, the order of items is determined as follows:
+As a general guideline, the order of items to discuss is determined as follows:
 
 - Prioritise pull requests over issues
 

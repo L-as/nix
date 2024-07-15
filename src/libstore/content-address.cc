@@ -4,69 +4,146 @@
 
 namespace nix {
 
-std::string makeFileIngestionPrefix(FileIngestionMethod m)
+std::string_view makeFileIngestionPrefix(FileIngestionMethod m)
 {
     switch (m) {
     case FileIngestionMethod::Flat:
+        // Not prefixed for back compat
         return "";
-    case FileIngestionMethod::Recursive:
+    case FileIngestionMethod::NixArchive:
         return "r:";
+    case FileIngestionMethod::Git:
+        experimentalFeatureSettings.require(Xp::GitHashing);
+        return "git:";
     default:
-        throw Error("impossible, caught both cases");
+        assert(false);
     }
 }
 
-std::string ContentAddressMethod::renderPrefix() const
+std::string_view ContentAddressMethod::render() const
 {
-    return std::visit(overloaded {
-        [](TextIngestionMethod) -> std::string { return "text:"; },
-        [](FileIngestionMethod m2) {
-             /* Not prefixed for back compat with things that couldn't produce text before. */
-            return makeFileIngestionPrefix(m2);
-        },
-    }, raw);
+    switch (raw) {
+    case ContentAddressMethod::Raw::Text:
+        return "text";
+    case ContentAddressMethod::Raw::Flat:
+    case ContentAddressMethod::Raw::NixArchive:
+    case ContentAddressMethod::Raw::Git:
+        return renderFileIngestionMethod(getFileIngestionMethod());
+    default:
+        assert(false);
+    }
+}
+
+/**
+ * **Not surjective**
+ *
+ * This is not exposed because `FileIngestionMethod::Flat` maps to
+ * `ContentAddressMethod::Raw::Flat` and
+ * `ContentAddressMethod::Raw::Text` alike. We can thus only safely use
+ * this when the latter is ruled out (e.g. because it is already
+ * handled).
+ */
+static ContentAddressMethod fileIngestionMethodToContentAddressMethod(FileIngestionMethod m)
+{
+    switch (m) {
+    case FileIngestionMethod::Flat:
+        return ContentAddressMethod::Raw::Flat;
+    case FileIngestionMethod::NixArchive:
+        return ContentAddressMethod::Raw::NixArchive;
+    case FileIngestionMethod::Git:
+        return ContentAddressMethod::Raw::Git;
+    default:
+        assert(false);
+    }
+}
+
+ContentAddressMethod ContentAddressMethod::parse(std::string_view m)
+{
+    if (m == "text")
+        return ContentAddressMethod::Raw::Text;
+    else
+        return fileIngestionMethodToContentAddressMethod(
+            parseFileIngestionMethod(m));
+}
+
+std::string_view ContentAddressMethod::renderPrefix() const
+{
+    switch (raw) {
+    case ContentAddressMethod::Raw::Text:
+        return "text:";
+    case ContentAddressMethod::Raw::Flat:
+    case ContentAddressMethod::Raw::NixArchive:
+    case ContentAddressMethod::Raw::Git:
+        return makeFileIngestionPrefix(getFileIngestionMethod());
+    default:
+        assert(false);
+    }
 }
 
 ContentAddressMethod ContentAddressMethod::parsePrefix(std::string_view & m)
 {
-    ContentAddressMethod method = FileIngestionMethod::Flat;
-    if (splitPrefix(m, "r:"))
-        method = FileIngestionMethod::Recursive;
-    else if (splitPrefix(m, "text:"))
-        method = TextIngestionMethod {};
-    return method;
+    if (splitPrefix(m, "r:")) {
+        return ContentAddressMethod::Raw::NixArchive;
+    }
+    else if (splitPrefix(m, "git:")) {
+        experimentalFeatureSettings.require(Xp::GitHashing);
+        return ContentAddressMethod::Raw::Git;
+    }
+    else if (splitPrefix(m, "text:")) {
+        return ContentAddressMethod::Raw::Text;
+    }
+    return ContentAddressMethod::Raw::Flat;
 }
 
-std::string ContentAddressMethod::render(HashType ht) const
+/**
+ * This is slightly more mindful of forward compat in that it uses `fixed:`
+ * rather than just doing a raw empty prefix or `r:`, which doesn't "save room"
+ * for future changes very well.
+ */
+static std::string renderPrefixModern(const ContentAddressMethod & ca)
 {
-    return std::visit(overloaded {
-        [&](const TextIngestionMethod & th) {
-            return std::string{"text:"} + printHashType(ht);
-        },
-        [&](const FileIngestionMethod & fim) {
-            return "fixed:" + makeFileIngestionPrefix(fim) + printHashType(ht);
-        }
-    }, raw);
+    switch (ca.raw) {
+    case ContentAddressMethod::Raw::Text:
+        return "text:";
+    case ContentAddressMethod::Raw::Flat:
+    case ContentAddressMethod::Raw::NixArchive:
+    case ContentAddressMethod::Raw::Git:
+        return "fixed:" + makeFileIngestionPrefix(ca.getFileIngestionMethod());
+    default:
+        assert(false);
+    }
+}
+
+std::string ContentAddressMethod::renderWithAlgo(HashAlgorithm ha) const
+{
+    return renderPrefixModern(*this) + printHashAlgo(ha);
+}
+
+FileIngestionMethod ContentAddressMethod::getFileIngestionMethod() const
+{
+    switch (raw) {
+    case ContentAddressMethod::Raw::Flat:
+        return FileIngestionMethod::Flat;
+    case ContentAddressMethod::Raw::NixArchive:
+        return FileIngestionMethod::NixArchive;
+    case ContentAddressMethod::Raw::Git:
+        return FileIngestionMethod::Git;
+    case ContentAddressMethod::Raw::Text:
+        return FileIngestionMethod::Flat;
+    default:
+        assert(false);
+    }
 }
 
 std::string ContentAddress::render() const
 {
-    return std::visit(overloaded {
-        [](const TextIngestionMethod &) -> std::string {
-            return "text:";
-        },
-        [](const FileIngestionMethod & method) {
-            return "fixed:"
-                + makeFileIngestionPrefix(method);
-        },
-    }, method.raw)
-        + this->hash.to_string(Base32, true);
+    return renderPrefixModern(method) + this->hash.to_string(HashFormat::Nix32, true);
 }
 
 /**
  * Parses content address strings up to the hash.
  */
-static std::pair<ContentAddressMethod, HashType> parseContentAddressMethodPrefix(std::string_view & rest)
+static std::pair<ContentAddressMethod, HashAlgorithm> parseContentAddressMethodPrefix(std::string_view & rest)
 {
     std::string_view wholeInput { rest };
 
@@ -78,31 +155,35 @@ static std::pair<ContentAddressMethod, HashType> parseContentAddressMethodPrefix
         prefix = *optPrefix;
     }
 
-    auto parseHashType_ = [&](){
-        auto hashTypeRaw = splitPrefixTo(rest, ':');
-        if (!hashTypeRaw)
+    auto parseHashAlgorithm_ = [&](){
+        auto hashAlgoRaw = splitPrefixTo(rest, ':');
+        if (!hashAlgoRaw)
             throw UsageError("content address hash must be in form '<algo>:<hash>', but found: %s", wholeInput);
-        HashType hashType = parseHashType(*hashTypeRaw);
-        return std::move(hashType);
+        HashAlgorithm hashAlgo = parseHashAlgo(*hashAlgoRaw);
+        return hashAlgo;
     };
 
     // Switch on prefix
     if (prefix == "text") {
         // No parsing of the ingestion method, "text" only support flat.
-        HashType hashType = parseHashType_();
+        HashAlgorithm hashAlgo = parseHashAlgorithm_();
         return {
-            TextIngestionMethod {},
-            std::move(hashType),
+            ContentAddressMethod::Raw::Text,
+            std::move(hashAlgo),
         };
     } else if (prefix == "fixed") {
         // Parse method
-        auto method = FileIngestionMethod::Flat;
+        auto method = ContentAddressMethod::Raw::Flat;
         if (splitPrefix(rest, "r:"))
-            method = FileIngestionMethod::Recursive;
-        HashType hashType = parseHashType_();
+            method = ContentAddressMethod::Raw::NixArchive;
+        else if (splitPrefix(rest, "git:")) {
+            experimentalFeatureSettings.require(Xp::GitHashing);
+            method = ContentAddressMethod::Raw::Git;
+        }
+        HashAlgorithm hashAlgo = parseHashAlgorithm_();
         return {
             std::move(method),
-            std::move(hashType),
+            std::move(hashAlgo),
         };
     } else
         throw UsageError("content address prefix '%s' is unrecognized. Recogonized prefixes are 'text' or 'fixed'", prefix);
@@ -112,15 +193,15 @@ ContentAddress ContentAddress::parse(std::string_view rawCa)
 {
     auto rest = rawCa;
 
-    auto [caMethod, hashType] = parseContentAddressMethodPrefix(rest);
+    auto [caMethod, hashAlgo] = parseContentAddressMethodPrefix(rest);
 
     return ContentAddress {
-        .method = std::move(caMethod).raw,
-        .hash = Hash::parseNonSRIUnprefixed(rest, hashType),
+        .method = std::move(caMethod),
+        .hash = Hash::parseNonSRIUnprefixed(rest, hashAlgo),
     };
 }
 
-std::pair<ContentAddressMethod, HashType> ContentAddressMethod::parse(std::string_view caMethod)
+std::pair<ContentAddressMethod, HashAlgorithm> ContentAddressMethod::parseWithAlgo(std::string_view caMethod)
 {
     std::string asPrefix = std::string{caMethod} + ":";
     // parseContentAddressMethodPrefix takes its argument by reference
@@ -142,8 +223,8 @@ std::string renderContentAddress(std::optional<ContentAddress> ca)
 
 std::string ContentAddress::printMethodAlgo() const
 {
-    return method.renderPrefix()
-        + printHashType(hash.type);
+    return std::string { method.renderPrefix() }
+        + printHashAlgo(hash.algo);
 }
 
 bool StoreReferences::empty() const
@@ -158,57 +239,58 @@ size_t StoreReferences::size() const
 
 ContentAddressWithReferences ContentAddressWithReferences::withoutRefs(const ContentAddress & ca) noexcept
 {
-    return std::visit(overloaded {
-        [&](const TextIngestionMethod &) -> ContentAddressWithReferences {
-            return TextInfo {
-                .hash = ca.hash,
-                .references = {},
-            };
-        },
-        [&](const FileIngestionMethod & method) -> ContentAddressWithReferences {
-            return FixedOutputInfo {
-                .method = method,
-                .hash = ca.hash,
-                .references = {},
-            };
-        },
-    }, ca.method.raw);
+    switch (ca.method.raw) {
+    case ContentAddressMethod::Raw::Text:
+        return TextInfo {
+            .hash = ca.hash,
+            .references = {},
+        };
+    case ContentAddressMethod::Raw::Flat:
+    case ContentAddressMethod::Raw::NixArchive:
+    case ContentAddressMethod::Raw::Git:
+        return FixedOutputInfo {
+            .method = ca.method.getFileIngestionMethod(),
+            .hash = ca.hash,
+            .references = {},
+        };
+    default:
+        assert(false);
+    }
 }
 
-std::optional<ContentAddressWithReferences> ContentAddressWithReferences::fromPartsOpt(
-    ContentAddressMethod method, Hash hash, StoreReferences refs) noexcept
+ContentAddressWithReferences ContentAddressWithReferences::fromParts(
+    ContentAddressMethod method, Hash hash, StoreReferences refs)
 {
-    return std::visit(overloaded {
-        [&](TextIngestionMethod _) -> std::optional<ContentAddressWithReferences> {
-            if (refs.self)
-                return std::nullopt;
-            return ContentAddressWithReferences {
-                TextInfo {
-                    .hash = std::move(hash),
-                    .references = std::move(refs.others),
-                }
-            };
-        },
-        [&](FileIngestionMethod m2) -> std::optional<ContentAddressWithReferences> {
-            return ContentAddressWithReferences {
-                FixedOutputInfo {
-                    .method = m2,
-                    .hash = std::move(hash),
-                    .references = std::move(refs),
-                }
-            };
-        },
-    }, method.raw);
+    switch (method.raw) {
+    case ContentAddressMethod::Raw::Text:
+        if (refs.self)
+            throw Error("self-reference not allowed with text hashing");
+        return TextInfo {
+            .hash = std::move(hash),
+            .references = std::move(refs.others),
+        };
+    case ContentAddressMethod::Raw::Flat:
+    case ContentAddressMethod::Raw::NixArchive:
+    case ContentAddressMethod::Raw::Git:
+        return FixedOutputInfo {
+            .method = method.getFileIngestionMethod(),
+            .hash = std::move(hash),
+            .references = std::move(refs),
+        };
+    default:
+        assert(false);
+    }
 }
 
 ContentAddressMethod ContentAddressWithReferences::getMethod() const
 {
     return std::visit(overloaded {
         [](const TextInfo & th) -> ContentAddressMethod {
-            return TextIngestionMethod {};
+            return ContentAddressMethod::Raw::Text;
         },
         [](const FixedOutputInfo & fsh) -> ContentAddressMethod {
-            return fsh.method;
+            return fileIngestionMethodToContentAddressMethod(
+                fsh.method);
         },
     }, raw);
 }

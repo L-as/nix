@@ -1,7 +1,6 @@
 #pragma once
 ///@file
 
-#include "types.hh"
 #include "error.hh"
 #include "config.hh"
 
@@ -23,6 +22,7 @@ typedef enum {
     actQueryPathInfo = 109,
     actPostBuildHook = 110,
     actBuildWaiting = 111,
+    actFetchTree = 112,
 } ActivityType;
 
 typedef enum {
@@ -34,6 +34,7 @@ typedef enum {
     resProgress = 105,
     resSetExpected = 106,
     resPostBuildLogLine = 107,
+    resFetchStatus = 108,
 } ResultType;
 
 typedef uint64_t ActivityId;
@@ -115,6 +116,17 @@ public:
     { return {}; }
 
     virtual void setPrintBuildLogs(bool printBuildLogs)
+    { }
+};
+
+/**
+ * A variadic template that does nothing.
+ *
+ * Useful to call a function with each argument in a parameter pack.
+ */
+struct nop
+{
+    template<typename... T> nop(T...)
     { }
 };
 

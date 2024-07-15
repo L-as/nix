@@ -2,7 +2,6 @@
 ///@file
 
 #include <memory>
-#include <exception>
 #include <stdexcept>
 
 namespace nix {
@@ -76,6 +75,8 @@ public:
         return ref<T2>((std::shared_ptr<T2>) p);
     }
 
+    ref<T> & operator=(ref<T> const & rhs) = default;
+
     bool operator == (const ref<T> & other) const
     {
         return p == other.p;
@@ -86,9 +87,9 @@ public:
         return p != other.p;
     }
 
-    bool operator < (const ref<T> & other) const
+    auto operator <=> (const ref<T> & other) const
     {
-        return p < other.p;
+        return p <=> other.p;
     }
 
 private:
