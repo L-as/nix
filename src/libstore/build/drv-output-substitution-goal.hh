@@ -20,7 +20,8 @@ class Worker;
  * 2. Substitute the corresponding output path
  * 3. Register the output info
  */
-class DrvOutputSubstitutionGoal : public Goal {
+class DrvOutputSubstitutionGoal : public Goal
+{
 
     /**
      * The drv output we're trying to substitute
@@ -30,19 +31,27 @@ class DrvOutputSubstitutionGoal : public Goal {
     Co init() override;
     Co realisationFetched(std::shared_ptr<const Realisation> outputInfo, nix::ref<nix::Store> sub);
 
-    void timedOut(Error && ex) override { abort(); };
+    void timedOut(Error && ex) override
+    {
+        abort();
+    };
 
     std::string key() override;
 
     void handleEOF(Descriptor fd) override;
 
-    JobCategory jobCategory() const override {
+    JobCategory jobCategory() const override
+    {
         return JobCategory::Substitution;
     };
 
 public:
 
-    DrvOutputSubstitutionGoal(const DrvOutput& id, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
+    DrvOutputSubstitutionGoal(
+        const DrvOutput & id,
+        Worker & worker,
+        RepairFlag repair = NoRepair,
+        std::optional<ContentAddress> ca = std::nullopt);
 };
 
 }

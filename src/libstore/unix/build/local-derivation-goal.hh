@@ -96,12 +96,15 @@ class LocalDerivationGoal : public DerivationGoal
     /**
      * Stuff we need to pass to initChild().
      */
-    struct ChrootPath {
+    struct ChrootPath
+    {
         Path source;
         bool optional;
         ChrootPath(Path source = "", bool optional = false)
-            : source(source), optional(optional)
-        { }
+            : source(source)
+            , optional(optional)
+        {
+        }
     };
     typedef map<Path, ChrootPath> PathsInChroot; // maps target path to source path
     PathsInChroot pathsInChroot;
@@ -137,8 +140,14 @@ class LocalDerivationGoal : public DerivationGoal
      */
     OutputPathMap scratchOutputs;
 
-    uid_t sandboxUid() { return usingUserNamespace ? (!buildUser || buildUser->getUIDCount() == 1 ? 1000 : 0) : buildUser->getUID(); }
-    gid_t sandboxGid() { return usingUserNamespace ? (!buildUser || buildUser->getUIDCount() == 1 ? 100  : 0) : buildUser->getGID(); }
+    uid_t sandboxUid()
+    {
+        return usingUserNamespace ? (!buildUser || buildUser->getUIDCount() == 1 ? 1000 : 0) : buildUser->getUID();
+    }
+    gid_t sandboxGid()
+    {
+        return usingUserNamespace ? (!buildUser || buildUser->getUIDCount() == 1 ? 100 : 0) : buildUser->getGID();
+    }
 
     const static Path homeDir;
 
