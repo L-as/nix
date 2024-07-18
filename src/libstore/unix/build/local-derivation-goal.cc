@@ -199,7 +199,7 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
         if (settings.sandboxMode == smEnabled) {
             if (noChroot)
                 throw Error("derivation '%s' has '__noChroot' set, "
-                    "but that's not allowed when 'sandbox' is 'true'", worker.store.printStorePath(drvPath));
+                    "but that's not allowed when 'sandbox' is 'true'", worker.store.printStorePath(getDrvPath()));
 #if __APPLE__
             if (additionalSandboxProfile != "")
                 throw Error("derivation '%s' specifies a sandbox profile, "
@@ -240,7 +240,7 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
         if (!buildUser) {
             if (!actLock)
                 actLock = std::make_unique<Activity>(*logger, lvlWarn, actBuildWaiting,
-                    fmt("waiting for a free build user ID for '%s'", Magenta(worker.store.printStorePath(drvPath))));
+                    fmt("waiting for a free build user ID for '%s'", Magenta(worker.store.printStorePath(getDrvPath()))));
             worker.waitForAWhile(shared_from_this());
             co_await Suspend{};
             co_return tryLocalBuild();
@@ -498,13 +498,13 @@ void LocalDerivationGoal::startBuilder()
         throw Error("a '%s' with features {%s} is required to build '%s', but I am a '%s' with features {%s}",
             drv->platform,
             concatStringsSep(", ", parsedDrv->getRequiredSystemFeatures()),
-            worker.store.printStorePath(drvPath),
+            worker.store.printStorePath(getDrvPath()),
             settings.thisSystem,
             concatStringsSep<StringSet>(", ", worker.store.systemFeatures));
 
     /* Create a temporary directory where the build will take
        place. */
-    topTmpDir = createTempDir(settings.buildDir.get().value_or(""), "nix-build-" + std::string(drvPath.name()), false, false, 0700);
+    topTmpDir = createTempDir(settings.buildDir.get().value_or(""), "nix-build-" + std::string(getDrvPath().name()), false, false, 0700);
 #if __APPLE__
     if (false) {
 #else
@@ -677,7 +677,7 @@ void LocalDerivationGoal::startBuilder()
             }
             if (!found)
                 throw Error("derivation '%s' requested impure path '%s', but it was not in allowed-impure-host-deps",
-                    worker.store.printStorePath(drvPath), i);
+                    worker.store.printStorePath(getDrvPath()), i);
 
             /* Allow files in __impureHostDeps to be missing; e.g.
                macOS 11+ has no /usr/lib/libSystem*.dylib */
@@ -689,7 +689,7 @@ void LocalDerivationGoal::startBuilder()
            environment using bind-mounts.  We put it in the Nix store
            so that the build outputs can be moved efficiently from the
            chroot to their final location. */
-        chrootParentDir = worker.store.Store::toRealPath(drvPath) + ".chroot";
+        chrootParentDir = worker.store.Store::toRealPath(getDrvPath()) + ".chroot";
         deletePath(chrootParentDir);
 
         /* Clean up the chroot directory automatically. */
@@ -800,8 +800,8 @@ void LocalDerivationGoal::startBuilder()
 
     if (useChroot && settings.preBuildHook != "" && dynamic_cast<Derivation *>(drv.get())) {
         printMsg(lvlChatty, "executing pre-build hook '%1%'", settings.preBuildHook);
-        auto args = useChroot ? Strings({worker.store.printStorePath(drvPath), chrootRootDir}) :
-            Strings({ worker.store.printStorePath(drvPath) });
+        auto args = useChroot ? Strings({worker.store.printStorePath(getDrvPath()), chrootRootDir}) :
+            Strings({ worker.store.printStorePath(getDrvPath()) });
         enum BuildHookState {
             stBegin,
             stExtraChrootDirs
@@ -1062,7 +1062,7 @@ void LocalDerivationGoal::startBuilder()
             } catch (Error & e) {
                 auto status = pid.wait();
                 e.addTrace({}, "while waiting for the build environment for '%s' to initialize (%s, previous messages: %s)",
-                    worker.store.printStorePath(drvPath),
+                    worker.store.printStorePath(getDrvPath()),
                     statusToString(status),
                     concatStringsSep("|", msgs));
                 throw;
@@ -2297,7 +2297,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
         if (!scratchOutput)
             throw BuildError(
                 "builder for '%s' has no scratch output for '%s'",
-                worker.store.printStorePath(drvPath), outputName);
+                worker.store.printStorePath(getDrvPath()), outputName);
         auto actualPath = toRealPathChroot(worker.store.printStorePath(*scratchOutput));
 
         outputsToSort.insert(outputName);
@@ -2307,7 +2307,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
         if (!initialOutput)
             throw BuildError(
                 "builder for '%s' has no initial output for '%s'",
-                worker.store.printStorePath(drvPath), outputName);
+                worker.store.printStorePath(getDrvPath()), outputName);
         auto & initialInfo = *initialOutput;
 
         /* Don't register if already valid, and not checking */
@@ -2324,7 +2324,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
         if (!optSt)
             throw BuildError(
                 "builder for '%s' failed to produce output path for output '%s' at '%s'",
-                worker.store.printStorePath(drvPath), outputName, actualPath);
+                worker.store.printStorePath(getDrvPath()), outputName, actualPath);
         struct stat & st = *optSt;
 
 #ifndef __CYGWIN__
@@ -2352,7 +2352,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
             if (auto udr = get(*structuredAttrs, "unsafeDiscardReferences")) {
                 if (auto output = get(*udr, outputName)) {
                     if (!output->is_boolean())
-                        throw Error("attribute 'unsafeDiscardReferences.\"%s\"' of derivation '%s' must be a Boolean", outputName, drvPath.to_string());
+                        throw Error("attribute 'unsafeDiscardReferences.\"%s\"' of derivation '%s' must be a Boolean", outputName, getDrvPath().to_string());
                     discardReferences = output->get<bool>();
                 }
             }
@@ -2381,7 +2381,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
             if (!orifu)
                 throw BuildError(
                     "no output reference for '%s' in build of '%s'",
-                    name, worker.store.printStorePath(drvPath));
+                    name, worker.store.printStorePath(getDrvPath()));
             return std::visit(overloaded {
                 /* Since we'll use the already installed versions of these, we
                    can treat them as leaves and ignore any references they
@@ -2402,7 +2402,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
             // TODO with more -vvvv also show the temporary paths for manual inspection.
             return BuildError(
                 "cycle detected in build of '%s' in the references of output '%s' from output '%s'",
-                worker.store.printStorePath(drvPath), path, parent);
+                worker.store.printStorePath(getDrvPath()), path, parent);
         }});
 
     std::reverse(sortedOutputNames.begin(), sortedOutputNames.end());
@@ -2612,14 +2612,14 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
                     worker.hashMismatch = true;
                     delayedException = std::make_exception_ptr(
                         BuildError("hash mismatch in fixed-output derivation '%s':\n  specified: %s\n     got:    %s",
-                            worker.store.printStorePath(drvPath),
+                            worker.store.printStorePath(getDrvPath()),
                             wanted.to_string(HashFormat::SRI, true),
                             got.to_string(HashFormat::SRI, true)));
                 }
                 if (!newInfo0.references.empty())
                     delayedException = std::make_exception_ptr(
                         BuildError("illegal path references in fixed-output derivation '%s'",
-                            worker.store.printStorePath(drvPath)));
+                            worker.store.printStorePath(getDrvPath())));
 
                 return newInfo0;
             },
@@ -2702,13 +2702,13 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
                     handleDiffHook(
                         buildUser ? buildUser->getUID() : getuid(),
                         buildUser ? buildUser->getGID() : getgid(),
-                        finalDestPath, dst, worker.store.printStorePath(drvPath), tmpDir);
+                        finalDestPath, dst, worker.store.printStorePath(getDrvPath()), tmpDir);
 
                     throw NotDeterministic("derivation '%s' may not be deterministic: output '%s' differs from '%s'",
-                        worker.store.printStorePath(drvPath), worker.store.toRealPath(finalDestPath), dst);
+                        worker.store.printStorePath(getDrvPath()), worker.store.toRealPath(finalDestPath), dst);
                 } else
                     throw NotDeterministic("derivation '%s' may not be deterministic: output '%s' differs",
-                        worker.store.printStorePath(drvPath), worker.store.toRealPath(finalDestPath));
+                        worker.store.printStorePath(getDrvPath()), worker.store.toRealPath(finalDestPath));
             }
 
             /* Since we verified the build, it's now ultimately trusted. */
@@ -2732,7 +2732,7 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
         localStore.optimisePath(actualPath, NoRepair); // FIXME: combine with scanForReferences()
         worker.markContentsGood(newInfo.path);
 
-        newInfo.deriver = drvPath;
+        newInfo.deriver = getDrvPath();
         newInfo.ultimate = true;
         localStore.signPathInfo(newInfo);
 
@@ -2959,7 +2959,7 @@ void LocalDerivationGoal::checkOutputs(const std::map<std::string, ValidPathInfo
                             Strings res;
                             for (auto j = i->begin(); j != i->end(); ++j) {
                                 if (!j->is_string())
-                                    throw Error("attribute '%s' of derivation '%s' must be a list of strings", name, worker.store.printStorePath(drvPath));
+                                    throw Error("attribute '%s' of derivation '%s' must be a list of strings", name, worker.store.printStorePath(getDrvPath()));
                                 res.push_back(j->get<std::string>());
                             }
                             checks.disallowedRequisites = res;
@@ -3019,7 +3019,7 @@ StorePath LocalDerivationGoal::makeFallbackPath(OutputNameView outputName)
     // This is a bogus path type, constructed this way to ensure that it doesn't collide with any other store path
     // See doc/manual/src/protocols/store-path.md for details
     // TODO: We may want to separate the responsibilities of constructing the path fingerprint and of actually doing the hashing
-    auto pathType = "rewrite:" + std::string(drvPath.to_string()) + ":name:" + std::string(outputName);
+    auto pathType = "rewrite:" + std::string(getDrvPath().to_string()) + ":name:" + std::string(outputName);
     return worker.store.makeStorePath(
         pathType,
         // pass an all-zeroes hash
@@ -3031,7 +3031,7 @@ StorePath LocalDerivationGoal::makeFallbackPath(const StorePath & path)
 {
     // This is a bogus path type, constructed this way to ensure that it doesn't collide with any other store path
     // See doc/manual/src/protocols/store-path.md for details
-    auto pathType = "rewrite:" + std::string(drvPath.to_string()) + ":" + std::string(path.to_string());
+    auto pathType = "rewrite:" + std::string(getDrvPath().to_string()) + ":" + std::string(path.to_string());
     return worker.store.makeStorePath(
         pathType,
         // pass an all-zeroes hash

@@ -11,8 +11,9 @@ namespace nix {
 /**
  * Forward definition.
  */
-struct Goal;
+class Goal;
 class Worker;
+class DerivationGoal;
 
 /**
  * A pointer to a goal.
@@ -52,9 +53,15 @@ enum struct JobCategory {
     Substitution,
 };
 
-struct Goal : public std::enable_shared_from_this<Goal>
+class Goal : public std::enable_shared_from_this<Goal>
 {
+    friend struct CompareGoalPtrs;
+
+public:
+
     typedef enum {ecBusy, ecSuccess, ecFailed, ecNoSubstituters, ecIncompleteClosure} ExitCode;
+
+protected:
 
     /**
      * Backlink to the worker.
@@ -65,6 +72,8 @@ struct Goal : public std::enable_shared_from_this<Goal>
      * Goals that this goal is waiting for.
      */
     Goals waitees;
+
+private:
 
     /**
      * Goals waiting for this one to finish.  Must use weak pointers
@@ -89,22 +98,39 @@ struct Goal : public std::enable_shared_from_this<Goal>
      */
     size_t nrIncompleteClosure = 0;
 
+    // FIXME(@L-as): Remove, sets nrFailed, etc. to 0 some times.
+    friend class DerivationGoal;
+
+protected:
+
+    size_t getNrFailed() const { return nrFailed; }
+
+    size_t getNrNoSubstituters() const { return nrNoSubstituters; }
+
+    size_t getNrIncompleteClosure() const { return nrIncompleteClosure; }
+
     /**
      * Name of this goal for debugging purposes.
      */
     std::string name;
+
+private:
 
     /**
      * Whether the goal is finished.
      */
     ExitCode exitCode = ecBusy;
 
+public:
+
+    ExitCode getExitCode() const { return exitCode; }
+
 protected:
+
     /**
      * Build result.
      */
     BuildResult buildResult;
-public:
 
     /**
      * Suspend our goal and wait until we get @ref work()-ed again.
@@ -130,13 +156,19 @@ public:
         friend Goal;
     };
 
+private:
+
     // forward declaration of promise_type, see below
     struct promise_type;
+    // used as friend by Co
+    struct InitialSuspend;
 
     /**
      * Handle to coroutine using @ref Co and @ref promise_type.
      */
     using handle_type = std::coroutine_handle<promise_type>;
+
+protected:
 
     /**
      * C++20 coroutine wrapper for use in goal logic.
@@ -179,11 +211,17 @@ public:
      *
      * @todo Support returning data natively
      */
-    struct [[nodiscard]] Co {
+    class [[nodiscard]] Co {
+        friend struct InitialSuspend;
+        friend struct promise_type;
+        friend class Goal;
+
         /**
          * The underlying handle.
          */
         handle_type handle;
+
+        public:
 
         explicit Co(handle_type handle) : handle(handle) {};
         void operator=(Co&&);
@@ -206,6 +244,8 @@ public:
         std::coroutine_handle<> await_suspend(handle_type handle);
         void await_resume() {};
     };
+
+private:
 
     /**
      * Used on initial suspend, does the same as @ref std::suspend_always,
@@ -352,6 +392,7 @@ public:
      */
     inline Co init_wrapper();
 
+protected:
     /**
      * Signals that the goal is done.
      * `co_return` the result. If you're not inside a coroutine, you can ignore
@@ -359,7 +400,11 @@ public:
      */
     Done amDone(ExitCode result, std::optional<Error> ex = {});
 
+private:
+
     virtual void cleanup() { }
+
+public:
 
     /**
      * Project a `BuildResult` with just the information that pertains
@@ -373,10 +418,16 @@ public:
      */
     BuildResult getBuildResult(const DerivedPath &) const;
 
+private:
+
     /**
      * Exception containing an error message, if any.
      */
     std::optional<Error> ex;
+
+public:
+
+    std::optional<Error> const& getEx() const { return ex; }
 
     Goal(Worker & worker, DerivedPath path)
         : worker(worker), top_co(init_wrapper())
@@ -394,9 +445,13 @@ public:
 
     void work();
 
+protected:
+
     void addWaitee(GoalPtr waitee);
 
     virtual void waiteeDone(GoalPtr waitee, ExitCode result);
+
+public:
 
     virtual void handleChildOutput(Descriptor fd, std::string_view data)
     {
@@ -410,10 +465,7 @@ public:
 
     void trace(std::string_view s);
 
-    std::string getName() const
-    {
-        return name;
-    }
+    std::string getName() const { return name; }
 
     /**
      * Callback in case of a timeout.  It should wake up its waiters,
@@ -422,13 +474,24 @@ public:
      */
     virtual void timedOut(Error && ex) = 0;
 
+private:
+
     virtual std::string key() = 0;
+
+public:
 
     /**
      * @brief Hint for the scheduler, which concurrency limit applies.
      * @see JobCategory
      */
     virtual JobCategory jobCategory() const = 0;
+
+    /*
+     * Used to declare promise type associated with Co.
+     * Declaring `std::coroutine_traits` as a friend
+     * fails; it complains about "incomplete types" for some reason?
+     */
+    using _internal_promise_type = promise_type;
 };
 
 void addToWeakGoals(WeakGoals & goals, GoalPtr p);
@@ -437,7 +500,7 @@ void addToWeakGoals(WeakGoals & goals, GoalPtr p);
 
 template<typename... ArgTypes>
 struct std::coroutine_traits<nix::Goal::Co, ArgTypes...> {
-    using promise_type = nix::Goal::promise_type;
+    using promise_type = nix::Goal::_internal_promise_type;
 };
 
 nix::Goal::Co nix::Goal::init_wrapper() {

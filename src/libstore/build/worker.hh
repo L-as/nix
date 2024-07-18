@@ -1,20 +1,16 @@
 #pragma once
 ///@file
 
-#include "types.hh"
 #include "store-api.hh"
 #include "goal.hh"
 #include "realisation.hh"
 #include "muxable-pipe.hh"
 
-#include <future>
-#include <thread>
-
 namespace nix {
 
 /* Forward definition. */
-struct DerivationGoal;
-struct PathSubstitutionGoal;
+class DerivationGoal;
+class PathSubstitutionGoal;
 class DrvOutputSubstitutionGoal;
 
 /**

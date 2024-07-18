@@ -57,7 +57,7 @@ struct InitialOutput {
 /**
  * A goal for building some or all of the outputs of a derivation.
  */
-struct DerivationGoal : public Goal
+class DerivationGoal : public Goal
 {
     /**
      * Whether to use an on-disk .drv file.
@@ -66,6 +66,12 @@ struct DerivationGoal : public Goal
 
     /** The path of the derivation. */
     StorePath drvPath;
+
+public:
+
+    StorePath const& getDrvPath() const { return drvPath; }
+
+private:
 
     /**
      * The goal for the corresponding resolved derivation
@@ -76,6 +82,12 @@ struct DerivationGoal : public Goal
      * The specific outputs that we need to build.
      */
     OutputsSpec wantedOutputs;
+
+public:
+
+    OutputsSpec const& getWantedOutputs() { return wantedOutputs; }
+
+private:
 
     /**
      * Mapping from input derivations + output names to actual store
@@ -137,16 +149,17 @@ struct DerivationGoal : public Goal
      */
     RetrySubstitution retrySubstitution = RetrySubstitution::NoNeed;
 
+protected:
+
     /**
      * The derivation stored at drvPath.
      */
     std::unique_ptr<Derivation> drv;
 
-    std::unique_ptr<ParsedDerivation> parsedDrv;
-
     /**
      * The remainder is state held during the build.
      */
+    std::unique_ptr<ParsedDerivation> parsedDrv;
 
     /**
      * Locks on (fixed) output paths.
@@ -160,6 +173,8 @@ struct DerivationGoal : public Goal
     StorePathSet inputPaths;
 
     std::map<std::string, InitialOutput> initialOutputs;
+
+private:
 
     /**
      * File descriptor for the log file.
@@ -182,12 +197,15 @@ struct DerivationGoal : public Goal
 
     std::string currentHookLine;
 
+protected:
+
 #ifndef _WIN32 // TODO enable build hook on Windows
     /**
      * The build hook.
      */
     std::unique_ptr<HookInstance> hook;
 #endif
+
 
     /**
      * The sort of derivation we are building.
@@ -196,14 +214,20 @@ struct DerivationGoal : public Goal
 
     BuildMode buildMode;
 
+private:
+
     std::unique_ptr<MaintainCount<uint64_t>> mcExpectedBuilds, mcRunningBuilds;
 
     std::unique_ptr<Activity> act;
+
+protected:
 
     /**
      * Activity that denotes waiting for a lock.
      */
     std::unique_ptr<Activity> actLock;
+
+private:
 
     std::map<ActivityId, Activity> builderActivities;
 
@@ -212,22 +236,31 @@ struct DerivationGoal : public Goal
      */
     std::string machineName;
 
+public:
+
     DerivationGoal(const StorePath & drvPath,
         const OutputsSpec & wantedOutputs, Worker & worker,
         BuildMode buildMode = bmNormal);
     DerivationGoal(const StorePath & drvPath, const BasicDerivation & drv,
         const OutputsSpec & wantedOutputs, Worker & worker,
         BuildMode buildMode = bmNormal);
+
     virtual ~DerivationGoal();
+
+private:
 
     void timedOut(Error && ex) override;
 
     std::string key() override;
 
+public:
+
     /**
      * Add wanted outputs to an already existing derivation goal.
      */
     void addWantedOutputs(const OutputsSpec & outputs);
+
+private:
 
     /**
      * The states.
@@ -240,9 +273,20 @@ struct DerivationGoal : public Goal
     Co gaveUpOnSubstitution();
     Co closureRepaired();
     Co inputsRealised();
+
+protected:
+
     Co tryToBuild();
+
+private:
+
     virtual Co tryLocalBuild();
+
+protected:
+
     Co buildDone();
+
+private:
 
     Co resolvedFinished();
 
@@ -250,6 +294,8 @@ struct DerivationGoal : public Goal
      * Is the build hook willing to perform the build?
      */
     HookReply tryBuildHook();
+
+protected:
 
     virtual int getChildStatus();
 
@@ -269,15 +315,21 @@ struct DerivationGoal : public Goal
      */
     virtual void signRealisation(Realisation&) {}
 
+private:
+
     /**
      * Close the log file.
      */
     void closeLogFile();
 
+protected:
+
     /**
      * Close the read side of the logger pipe.
      */
     virtual void closeReadPipes();
+
+private:
 
     /**
      * Cleanup hooks for buildDone()
@@ -289,7 +341,11 @@ struct DerivationGoal : public Goal
     virtual void cleanupPostOutputsRegisteredModeCheck();
     virtual void cleanupPostOutputsRegisteredModeNonCheck();
 
+protected:
+
     virtual bool isReadDesc(Descriptor fd);
+
+private:
 
     /**
      * Callback used by the worker to write to the log.
@@ -305,6 +361,8 @@ struct DerivationGoal : public Goal
      */
     std::map<std::string, std::optional<StorePath>> queryPartialDerivationOutputMap();
     OutputPathMap queryDerivationOutputMap();
+
+protected:
 
     /**
      * Update 'initialOutputs' to determine the current status of the
@@ -325,14 +383,21 @@ struct DerivationGoal : public Goal
      */
     virtual void killChild();
 
+private:
+
     Co repairClosure();
 
+protected:
+
     void started();
+
 
     Done done(
         BuildResult::Status status,
         SingleDrvOutputs builtOutputs = {},
         std::optional<Error> ex = {});
+
+private:
 
     void waiteeDone(GoalPtr waitee, ExitCode result) override;
 

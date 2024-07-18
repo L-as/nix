@@ -3,32 +3,27 @@
 
 namespace nix {
 
-using Co = nix::Goal::Co;
-using promise_type = nix::Goal::promise_type;
-using handle_type = nix::Goal::handle_type;
-using Suspend = nix::Goal::Suspend;
-
-Co::Co(Co&& rhs) {
+nix::Goal::Co::Co(Co&& rhs) {
     this->handle = rhs.handle;
     rhs.handle = nullptr;
 }
-void Co::operator=(Co&& rhs) {
+void nix::Goal::Co::operator=(Co&& rhs) {
     this->handle = rhs.handle;
     rhs.handle = nullptr;
 }
-Co::~Co() {
+nix::Goal::Co::~Co() {
     if (handle) {
         handle.promise().alive = false;
         handle.destroy();
     }
 }
 
-Co promise_type::get_return_object() {
+nix::Goal::Co nix::Goal::promise_type::get_return_object() {
     auto handle = handle_type::from_promise(*this);
     return Co{handle};
 };
 
-std::coroutine_handle<> promise_type::final_awaiter::await_suspend(handle_type h) noexcept {
+std::coroutine_handle<> nix::Goal::promise_type::final_awaiter::await_suspend(handle_type h) noexcept {
     auto& p = h.promise();
     auto goal = p.goal;
     assert(goal);
@@ -68,7 +63,7 @@ std::coroutine_handle<> promise_type::final_awaiter::await_suspend(handle_type h
     }
 }
 
-void promise_type::return_value(Co&& next) {
+void nix::Goal::promise_type::return_value(Co&& next) {
     goal->trace("return_value(Co&&)");
     // Save old continuation.
     auto old_continuation = std::move(continuation);

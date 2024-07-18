@@ -28,7 +28,10 @@ class DrvOutputSubstitutionGoal : public Goal {
     DrvOutput id;
 
 public:
+
     DrvOutputSubstitutionGoal(const DrvOutput& id, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
+
+private:
 
     typedef void (DrvOutputSubstitutionGoal::*GoalState)();
     GoalState state;

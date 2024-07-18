@@ -7,7 +7,7 @@
 
 namespace nix {
 
-struct LocalDerivationGoal : public DerivationGoal
+class LocalDerivationGoal : public DerivationGoal
 {
     LocalStore & getLocalStore();
 
@@ -188,7 +188,11 @@ struct LocalDerivationGoal : public DerivationGoal
 
     using DerivationGoal::DerivationGoal;
 
+public:
+
     virtual ~LocalDerivationGoal() override;
+
+private:
 
     /**
      * Whether we need to perform hash rewriting if there are valid output paths.

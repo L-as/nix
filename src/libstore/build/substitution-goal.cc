@@ -3,7 +3,7 @@
 #include "nar-info.hh"
 #include "finally.hh"
 #include "signals.hh"
-#include <coroutine>
+#include <future>
 
 namespace nix {
 
@@ -162,9 +162,9 @@ Goal::Co PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, 
 {
     trace("all references realised");
 
-    if (nrFailed > 0) {
+    if (getNrFailed() > 0) {
         co_return done(
-            nrNoSubstituters > 0 || nrIncompleteClosure > 0 ? ecIncompleteClosure : ecFailed,
+            getNrNoSubstituters() > 0 || getNrIncompleteClosure() > 0 ? ecIncompleteClosure : ecFailed,
             BuildResult::DependencyFailed,
             fmt("some references of path '%s' could not be realised", worker.store.printStorePath(storePath)));
     }

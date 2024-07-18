@@ -3,7 +3,6 @@
 #ifndef _WIN32 // TODO Enable building on Windows
 #  include "derivation-goal.hh"
 #endif
-#include "local-store.hh"
 #include "strings.hh"
 
 namespace nix {
@@ -21,26 +20,26 @@ void Store::buildPaths(const std::vector<DerivedPath> & reqs, BuildMode buildMod
     StringSet failed;
     std::optional<Error> ex;
     for (auto & i : goals) {
-        if (i->ex) {
+        if (auto i_ex = i->getEx()) {
             if (ex)
-                logError(i->ex->info());
+                logError(i_ex->info());
             else
-                ex = std::move(i->ex);
+                ex = i_ex;
         }
-        if (i->exitCode != Goal::ecSuccess) {
+        if (i->getExitCode() != Goal::ecSuccess) {
 #ifndef _WIN32 // TODO Enable building on Windows
             if (auto i2 = dynamic_cast<DerivationGoal *>(i.get()))
-                failed.insert(printStorePath(i2->drvPath));
+                failed.insert(printStorePath(i2->getDrvPath()));
             else
 #endif
             if (auto i2 = dynamic_cast<PathSubstitutionGoal *>(i.get()))
-                failed.insert(printStorePath(i2->storePath));
+                failed.insert(printStorePath(i2->getStorePath()));
         }
     }
 
     if (failed.size() == 1 && ex) {
         ex->withExitStatus(worker.failingExitStatus());
-        throw std::move(*ex);
+        throw *ex;
     } else if (!failed.empty()) {
         if (ex) logError(ex->info());
         throw Error(worker.failingExitStatus(), "build of %s failed", concatStringsSep(", ", quoteStrings(failed)));
@@ -113,10 +112,10 @@ void Store::ensurePath(const StorePath & path)
 
     worker.run(goals);
 
-    if (goal->exitCode != Goal::ecSuccess) {
-        if (goal->ex) {
-            goal->ex->withExitStatus(worker.failingExitStatus());
-            throw std::move(*goal->ex);
+    if (goal->getExitCode() != Goal::ecSuccess) {
+        if (auto ex = goal->getEx()) {
+            ex->withExitStatus(worker.failingExitStatus());
+            throw std::move(*ex);
         } else
             throw Error(worker.failingExitStatus(), "path '%s' does not exist and cannot be created", printStorePath(path));
     }
@@ -131,7 +130,7 @@ void Store::repairPath(const StorePath & path)
 
     worker.run(goals);
 
-    if (goal->exitCode != Goal::ecSuccess) {
+    if (goal->getExitCode() != Goal::ecSuccess) {
         /* Since substituting the path didn't work, if we have a valid
            deriver, then rebuild the deriver. */
         auto info = queryPathInfo(path);

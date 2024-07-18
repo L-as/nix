@@ -134,9 +134,9 @@ Goal::Co DrvOutputSubstitutionGoal::realisationFetched(std::shared_ptr<const Rea
 
     trace("output path substituted");
 
-    if (nrFailed > 0) {
+    if (getNrFailed() > 0) {
         debug("The output path of the derivation output '%s' could not be substituted", id.to_string());
-        co_return amDone(nrNoSubstituters > 0 || nrIncompleteClosure > 0 ? ecIncompleteClosure : ecFailed);
+        co_return amDone(getNrNoSubstituters() > 0 || getNrIncompleteClosure() > 0 ? ecIncompleteClosure : ecFailed);
     }
 
     worker.store.registerDrvOutput(*outputInfo);

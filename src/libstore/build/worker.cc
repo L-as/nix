@@ -163,7 +163,7 @@ void Worker::removeGoal(GoalPtr goal)
         topGoals.erase(goal);
         /* If a top-level goal failed, then kill all other goals
            (unless keepGoing was set). */
-        if (goal->exitCode == Goal::ecFailed && !settings.keepGoing)
+        if (goal->getExitCode() == Goal::ecFailed && !settings.keepGoing)
             topGoals.clear();
     }
 
@@ -292,12 +292,12 @@ void Worker::run(const Goals & _topGoals)
         topGoals.insert(i);
         if (auto goal = dynamic_cast<DerivationGoal *>(i.get())) {
             topPaths.push_back(DerivedPath::Built {
-                .drvPath = makeConstantStorePathRef(goal->drvPath),
-                .outputs = goal->wantedOutputs,
+                .drvPath = makeConstantStorePathRef(goal->getDrvPath()),
+                .outputs = goal->getWantedOutputs(),
             });
         } else
         if (auto goal = dynamic_cast<PathSubstitutionGoal *>(i.get())) {
-            topPaths.push_back(DerivedPath::Opaque{goal->storePath});
+            topPaths.push_back(DerivedPath::Opaque{goal->getStorePath()});
         }
     }
 
@@ -460,7 +460,7 @@ void Worker::waitForInput()
                 goal->handleEOF(k);
             });
 
-        if (goal->exitCode == Goal::ecBusy &&
+        if (goal->getExitCode() == Goal::ecBusy &&
             0 != settings.maxSilentTime &&
             j->respectTimeouts &&
             after - j->lastOutput >= std::chrono::seconds(settings.maxSilentTime))
@@ -470,7 +470,7 @@ void Worker::waitForInput()
                     goal->getName(), settings.maxSilentTime));
         }
 
-        else if (goal->exitCode == Goal::ecBusy &&
+        else if (goal->getExitCode() == Goal::ecBusy &&
             0 != settings.buildTimeout &&
             j->respectTimeouts &&
             after - j->timeStarted >= std::chrono::seconds(settings.buildTimeout))

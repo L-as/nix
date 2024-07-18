@@ -5,18 +5,21 @@
 #include "store-api.hh"
 #include "goal.hh"
 #include "muxable-pipe.hh"
-#include <coroutine>
-#include <future>
-#include <source_location>
 
 namespace nix {
 
-struct PathSubstitutionGoal : public Goal
+class PathSubstitutionGoal : public Goal
 {
     /**
      * The store path that should be realised through a substitute.
      */
     StorePath storePath;
+
+public:
+
+    StorePath const& getStorePath() const { return storePath; }
+
+private:
 
     /**
      * Whether to try to repair a valid path.
@@ -47,8 +50,11 @@ struct PathSubstitutionGoal : public Goal
         std::optional<std::string> errorMsg = {});
 
 public:
+
     PathSubstitutionGoal(const StorePath & storePath, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
     ~PathSubstitutionGoal();
+
+private:
 
     void timedOut(Error && ex) override { abort(); };
 

@@ -163,7 +163,7 @@ Goal::Co DerivationGoal::loadDerivation()
 {
     trace("loading derivation");
 
-    if (nrFailed != 0) {
+    if (getNrFailed() != 0) {
         co_return done(BuildResult::MiscFailure, {}, Error("cannot build missing derivation '%s'", worker.store.printStorePath(drvPath)));
     }
 
@@ -278,7 +278,7 @@ Goal::Co DerivationGoal::outputsSubstitutionTried()
 
     assert(!drv->type().isImpure());
 
-    if (nrFailed > 0 && nrFailed > nrNoSubstituters + nrIncompleteClosure && !settings.tryFallback) {
+    if (getNrFailed() > 0 && getNrFailed() > getNrNoSubstituters() + getNrIncompleteClosure() && !settings.tryFallback) {
         co_return done(BuildResult::TransientFailure, {},
             Error("some substitutes for the outputs of derivation '%s' failed (usually happens due to networking issues); try '--fallback' to build derivation from source ",
                 worker.store.printStorePath(drvPath)));
@@ -294,8 +294,8 @@ Goal::Co DerivationGoal::outputsSubstitutionTried()
      */
     {
         bool substitutionFailed =
-            nrIncompleteClosure > 0 &&
-            nrIncompleteClosure == nrFailed;
+            getNrIncompleteClosure() > 0 &&
+            getNrIncompleteClosure() == getNrFailed();
         switch (retrySubstitution) {
         case RetrySubstitution::NoNeed:
             if (substitutionFailed)
@@ -468,7 +468,7 @@ Goal::Co DerivationGoal::repairClosure()
 Goal::Co DerivationGoal::closureRepaired()
 {
     trace("closure repaired");
-    if (nrFailed > 0)
+    if (getNrFailed() > 0)
         throw Error("some paths in the output closure of derivation '%s' could not be repaired",
             worker.store.printStorePath(drvPath));
     co_return done(BuildResult::AlreadyValid, assertPathValidity());
@@ -479,12 +479,12 @@ Goal::Co DerivationGoal::inputsRealised()
 {
     trace("all inputs realised");
 
-    if (nrFailed != 0) {
+    if (getNrFailed() != 0) {
         if (!useDerivation)
             throw Error("some dependencies of '%s' are missing", worker.store.printStorePath(drvPath));
         co_return done(BuildResult::DependencyFailed, {}, Error(
                 "%s dependencies of derivation '%s' failed to build",
-                nrFailed, worker.store.printStorePath(drvPath)));
+                getNrFailed(), worker.store.printStorePath(drvPath)));
     }
 
     if (retrySubstitution == RetrySubstitution::YesNeed) {
