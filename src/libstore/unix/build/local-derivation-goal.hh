@@ -186,14 +186,6 @@ class LocalDerivationGoal : public DerivationGoal
 
     friend struct RestrictedStore;
 
-    using DerivationGoal::DerivationGoal;
-
-public:
-
-    virtual ~LocalDerivationGoal() override;
-
-private:
-
     /**
      * Whether we need to perform hash rewriting if there are valid output paths.
      */
@@ -311,6 +303,12 @@ private:
      * rewrites caught everything
      */
     StorePath makeFallbackPath(OutputNameView outputName);
+
+public:
+
+    using DerivationGoal::DerivationGoal;
+
+    virtual ~LocalDerivationGoal() override;
 };
 
 }

@@ -15,12 +15,6 @@ class PathSubstitutionGoal : public Goal
      */
     StorePath storePath;
 
-public:
-
-    StorePath const& getStorePath() const { return storePath; }
-
-private:
-
     /**
      * Whether to try to repair a valid path.
      */
@@ -48,13 +42,6 @@ private:
         ExitCode result,
         BuildResult::Status status,
         std::optional<std::string> errorMsg = {});
-
-public:
-
-    PathSubstitutionGoal(const StorePath & storePath, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
-    ~PathSubstitutionGoal();
-
-private:
 
     void timedOut(Error && ex) override { abort(); };
 
@@ -87,6 +74,13 @@ private:
     JobCategory jobCategory() const override {
         return JobCategory::Substitution;
     };
+
+public:
+
+    PathSubstitutionGoal(const StorePath & storePath, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
+    ~PathSubstitutionGoal();
+
+    StorePath const& getStorePath() const { return storePath; }
 };
 
 }

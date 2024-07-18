@@ -27,12 +27,6 @@ class DrvOutputSubstitutionGoal : public Goal {
      */
     DrvOutput id;
 
-public:
-
-    DrvOutputSubstitutionGoal(const DrvOutput& id, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
-
-private:
-
     Co init() override;
     Co realisationFetched(std::shared_ptr<const Realisation> outputInfo, nix::ref<nix::Store> sub);
 
@@ -45,6 +39,10 @@ private:
     JobCategory jobCategory() const override {
         return JobCategory::Substitution;
     };
+
+public:
+
+    DrvOutputSubstitutionGoal(const DrvOutput& id, Worker & worker, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
 };
 
 }

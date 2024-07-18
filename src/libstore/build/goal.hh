@@ -57,24 +57,6 @@ class Goal : public std::enable_shared_from_this<Goal>
 {
     friend struct CompareGoalPtrs;
 
-public:
-
-    typedef enum {ecBusy, ecSuccess, ecFailed, ecNoSubstituters, ecIncompleteClosure} ExitCode;
-
-protected:
-
-    /**
-     * Backlink to the worker.
-     */
-    Worker & worker;
-
-    /**
-     * Goals that this goal is waiting for.
-     */
-    Goals waitees;
-
-private:
-
     /**
      * Goals waiting for this one to finish.  Must use weak pointers
      * here to prevent cycles.
@@ -101,18 +83,9 @@ private:
     // FIXME(@L-as): Remove, sets nrFailed, etc. to 0 some times.
     friend class DerivationGoal;
 
-protected:
+public:
 
-    size_t getNrFailed() const { return nrFailed; }
-
-    size_t getNrNoSubstituters() const { return nrNoSubstituters; }
-
-    size_t getNrIncompleteClosure() const { return nrIncompleteClosure; }
-
-    /**
-     * Name of this goal for debugging purposes.
-     */
-    std::string name;
+    typedef enum {ecBusy, ecSuccess, ecFailed, ecNoSubstituters, ecIncompleteClosure} ExitCode;
 
 private:
 
@@ -121,16 +94,7 @@ private:
      */
     ExitCode exitCode = ecBusy;
 
-public:
-
-    ExitCode getExitCode() const { return exitCode; }
-
 protected:
-
-    /**
-     * Build result.
-     */
-    BuildResult buildResult;
 
     /**
      * Suspend our goal and wait until we get @ref work()-ed again.
@@ -392,7 +356,43 @@ private:
      */
     inline Co init_wrapper();
 
+    virtual void cleanup() { }
+
+    /**
+     * Exception containing an error message, if any.
+     */
+    std::optional<Error> ex;
+
+    virtual std::string key() = 0;
+
 protected:
+
+    /**
+     * Backlink to the worker.
+     */
+    Worker & worker;
+
+    /**
+     * Goals that this goal is waiting for.
+     */
+    Goals waitees;
+
+    /**
+     * Build result.
+     */
+    BuildResult buildResult;
+
+    size_t getNrFailed() const { return nrFailed; }
+
+    size_t getNrNoSubstituters() const { return nrNoSubstituters; }
+
+    size_t getNrIncompleteClosure() const { return nrIncompleteClosure; }
+
+    /**
+     * Name of this goal for debugging purposes.
+     */
+    std::string name;
+
     /**
      * Signals that the goal is done.
      * `co_return` the result. If you're not inside a coroutine, you can ignore
@@ -400,11 +400,13 @@ protected:
      */
     Done amDone(ExitCode result, std::optional<Error> ex = {});
 
-private:
+    void addWaitee(GoalPtr waitee);
 
-    virtual void cleanup() { }
+    virtual void waiteeDone(GoalPtr waitee, ExitCode result);
 
 public:
+
+    ExitCode getExitCode() const { return exitCode; }
 
     /**
      * Project a `BuildResult` with just the information that pertains
@@ -418,19 +420,10 @@ public:
      */
     BuildResult getBuildResult(const DerivedPath &) const;
 
-private:
-
-    /**
-     * Exception containing an error message, if any.
-     */
-    std::optional<Error> ex;
-
-public:
-
     std::optional<Error> const& getEx() const { return ex; }
 
     Goal(Worker & worker, DerivedPath path)
-        : worker(worker), top_co(init_wrapper())
+        : top_co(init_wrapper()), worker(worker)
     {
         // top_co shouldn't have a goal already, should be nullptr.
         assert(!top_co->handle.promise().goal);
@@ -444,14 +437,6 @@ public:
     }
 
     void work();
-
-protected:
-
-    void addWaitee(GoalPtr waitee);
-
-    virtual void waiteeDone(GoalPtr waitee, ExitCode result);
-
-public:
 
     virtual void handleChildOutput(Descriptor fd, std::string_view data)
     {
@@ -473,12 +458,6 @@ public:
      * by the worker (important!), etc.
      */
     virtual void timedOut(Error && ex) = 0;
-
-private:
-
-    virtual std::string key() = 0;
-
-public:
 
     /**
      * @brief Hint for the scheduler, which concurrency limit applies.

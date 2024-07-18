@@ -67,12 +67,6 @@ class DerivationGoal : public Goal
     /** The path of the derivation. */
     StorePath drvPath;
 
-public:
-
-    StorePath const& getDrvPath() const { return drvPath; }
-
-private:
-
     /**
      * The goal for the corresponding resolved derivation
      */
@@ -82,12 +76,6 @@ private:
      * The specific outputs that we need to build.
      */
     OutputsSpec wantedOutputs;
-
-public:
-
-    OutputsSpec const& getWantedOutputs() { return wantedOutputs; }
-
-private:
 
     /**
      * Mapping from input derivations + output names to actual store
@@ -149,6 +137,103 @@ private:
      */
     RetrySubstitution retrySubstitution = RetrySubstitution::NoNeed;
 
+    /**
+     * File descriptor for the log file.
+     */
+    AutoCloseFD fdLogFile;
+    std::shared_ptr<BufferedSink> logFileSink, logSink;
+
+    /**
+     * Number of bytes received from the builder's stdout/stderr.
+     */
+    unsigned long logSize;
+
+    /**
+     * The most recent log lines.
+     */
+    std::list<std::string> logTail;
+
+    std::string currentLogLine;
+    size_t currentLogLinePos = 0; // to handle carriage return
+
+    std::string currentHookLine;
+
+    std::unique_ptr<MaintainCount<uint64_t>> mcExpectedBuilds, mcRunningBuilds;
+
+    std::unique_ptr<Activity> act;
+
+    std::map<ActivityId, Activity> builderActivities;
+
+    /**
+     * The remote machine on which we're building.
+     */
+    std::string machineName;
+
+    void timedOut(Error && ex) override;
+
+    std::string key() override;
+
+    /**
+     * The states.
+     */
+    Co init() override;
+    Co getDerivation();
+    Co loadDerivation();
+    Co haveDerivation();
+    Co outputsSubstitutionTried();
+    Co gaveUpOnSubstitution();
+    Co closureRepaired();
+    Co inputsRealised();
+
+    virtual Co tryLocalBuild();
+
+    Co resolvedFinished();
+
+    /**
+     * Is the build hook willing to perform the build?
+     */
+    HookReply tryBuildHook();
+
+    /**
+     * Close the log file.
+     */
+    void closeLogFile();
+
+    /**
+     * Cleanup hooks for buildDone()
+     */
+    virtual void cleanupHookFinally();
+    virtual void cleanupPreChildKill();
+    virtual void cleanupPostChildKill();
+    virtual bool cleanupDecideWhetherDiskFull();
+    virtual void cleanupPostOutputsRegisteredModeCheck();
+    virtual void cleanupPostOutputsRegisteredModeNonCheck();
+
+    /**
+     * Callback used by the worker to write to the log.
+     */
+    void handleChildOutput(Descriptor fd, std::string_view data) override;
+    void handleEOF(Descriptor fd) override;
+    void flushLine();
+
+    /**
+     * Wrappers around the corresponding Store methods that first consult the
+     * derivation.  This is currently needed because when there is no drv file
+     * there also is no DB entry.
+     */
+    std::map<std::string, std::optional<StorePath>> queryPartialDerivationOutputMap();
+    OutputPathMap queryDerivationOutputMap();
+
+    Co repairClosure();
+
+    void waiteeDone(GoalPtr waitee, ExitCode result) override;
+
+    StorePathSet exportReferences(const StorePathSet & storePaths);
+
+    JobCategory jobCategory() const override {
+        return JobCategory::Build;
+    };
+
 protected:
 
     /**
@@ -174,38 +259,12 @@ protected:
 
     std::map<std::string, InitialOutput> initialOutputs;
 
-private:
-
-    /**
-     * File descriptor for the log file.
-     */
-    AutoCloseFD fdLogFile;
-    std::shared_ptr<BufferedSink> logFileSink, logSink;
-
-    /**
-     * Number of bytes received from the builder's stdout/stderr.
-     */
-    unsigned long logSize;
-
-    /**
-     * The most recent log lines.
-     */
-    std::list<std::string> logTail;
-
-    std::string currentLogLine;
-    size_t currentLogLinePos = 0; // to handle carriage return
-
-    std::string currentHookLine;
-
-protected:
-
 #ifndef _WIN32 // TODO enable build hook on Windows
     /**
      * The build hook.
      */
     std::unique_ptr<HookInstance> hook;
 #endif
-
 
     /**
      * The sort of derivation we are building.
@@ -214,88 +273,14 @@ protected:
 
     BuildMode buildMode;
 
-private:
-
-    std::unique_ptr<MaintainCount<uint64_t>> mcExpectedBuilds, mcRunningBuilds;
-
-    std::unique_ptr<Activity> act;
-
-protected:
-
     /**
      * Activity that denotes waiting for a lock.
      */
     std::unique_ptr<Activity> actLock;
 
-private:
-
-    std::map<ActivityId, Activity> builderActivities;
-
-    /**
-     * The remote machine on which we're building.
-     */
-    std::string machineName;
-
-public:
-
-    DerivationGoal(const StorePath & drvPath,
-        const OutputsSpec & wantedOutputs, Worker & worker,
-        BuildMode buildMode = bmNormal);
-    DerivationGoal(const StorePath & drvPath, const BasicDerivation & drv,
-        const OutputsSpec & wantedOutputs, Worker & worker,
-        BuildMode buildMode = bmNormal);
-
-    virtual ~DerivationGoal();
-
-private:
-
-    void timedOut(Error && ex) override;
-
-    std::string key() override;
-
-public:
-
-    /**
-     * Add wanted outputs to an already existing derivation goal.
-     */
-    void addWantedOutputs(const OutputsSpec & outputs);
-
-private:
-
-    /**
-     * The states.
-     */
-    Co init() override;
-    Co getDerivation();
-    Co loadDerivation();
-    Co haveDerivation();
-    Co outputsSubstitutionTried();
-    Co gaveUpOnSubstitution();
-    Co closureRepaired();
-    Co inputsRealised();
-
-protected:
-
     Co tryToBuild();
 
-private:
-
-    virtual Co tryLocalBuild();
-
-protected:
-
     Co buildDone();
-
-private:
-
-    Co resolvedFinished();
-
-    /**
-     * Is the build hook willing to perform the build?
-     */
-    HookReply tryBuildHook();
-
-protected:
 
     virtual int getChildStatus();
 
@@ -315,54 +300,12 @@ protected:
      */
     virtual void signRealisation(Realisation&) {}
 
-private:
-
-    /**
-     * Close the log file.
-     */
-    void closeLogFile();
-
-protected:
-
     /**
      * Close the read side of the logger pipe.
      */
     virtual void closeReadPipes();
 
-private:
-
-    /**
-     * Cleanup hooks for buildDone()
-     */
-    virtual void cleanupHookFinally();
-    virtual void cleanupPreChildKill();
-    virtual void cleanupPostChildKill();
-    virtual bool cleanupDecideWhetherDiskFull();
-    virtual void cleanupPostOutputsRegisteredModeCheck();
-    virtual void cleanupPostOutputsRegisteredModeNonCheck();
-
-protected:
-
     virtual bool isReadDesc(Descriptor fd);
-
-private:
-
-    /**
-     * Callback used by the worker to write to the log.
-     */
-    void handleChildOutput(Descriptor fd, std::string_view data) override;
-    void handleEOF(Descriptor fd) override;
-    void flushLine();
-
-    /**
-     * Wrappers around the corresponding Store methods that first consult the
-     * derivation.  This is currently needed because when there is no drv file
-     * there also is no DB entry.
-     */
-    std::map<std::string, std::optional<StorePath>> queryPartialDerivationOutputMap();
-    OutputPathMap queryDerivationOutputMap();
-
-protected:
 
     /**
      * Update 'initialOutputs' to determine the current status of the
@@ -383,29 +326,32 @@ protected:
      */
     virtual void killChild();
 
-private:
-
-    Co repairClosure();
-
-protected:
-
     void started();
-
 
     Done done(
         BuildResult::Status status,
         SingleDrvOutputs builtOutputs = {},
         std::optional<Error> ex = {});
 
-private:
+public:
 
-    void waiteeDone(GoalPtr waitee, ExitCode result) override;
+    /**
+     * Add wanted outputs to an already existing derivation goal.
+     */
+    void addWantedOutputs(const OutputsSpec & outputs);
 
-    StorePathSet exportReferences(const StorePathSet & storePaths);
+    StorePath const& getDrvPath() const { return drvPath; }
 
-    JobCategory jobCategory() const override {
-        return JobCategory::Build;
-    };
+    OutputsSpec const& getWantedOutputs() { return wantedOutputs; }
+
+    DerivationGoal(const StorePath & drvPath,
+        const OutputsSpec & wantedOutputs, Worker & worker,
+        BuildMode buildMode = bmNormal);
+    DerivationGoal(const StorePath & drvPath, const BasicDerivation & drv,
+        const OutputsSpec & wantedOutputs, Worker & worker,
+        BuildMode buildMode = bmNormal);
+
+    virtual ~DerivationGoal();
 };
 
 MakeError(NotDeterministic, BuildError);
