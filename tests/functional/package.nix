@@ -59,7 +59,7 @@ mkMesonDerivation (finalAttrs: {
     busybox-sandbox-shell
   ];
 
-  nativeBuildInputs = finalAttrs.baseNativeBuildInputs ++ [
+  nativeBuildInputs = finalAttrs.passthru.baseNativeBuildInputs ++ [
     nix-ng
   ];
 

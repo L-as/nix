@@ -210,6 +210,9 @@
                 "${nixpkgsPrefix}${pkgName}-${testName}" = test;
               })
             )
+          // lib.optionalAttrs (nixpkgs.stdenv.hostPlatform == nixpkgs.stdenv.buildPlatform) {
+            "${nixpkgsPrefix}nix-functional-tests" = nixpkgs.nixComponents.nix-functional-tests;
+          }
         )
       // devFlake.checks.${system} or {}
       );
