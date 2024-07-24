@@ -11,6 +11,7 @@
 , jq
 , git
 , mercurial
+, unixtools
 
 , nix-store
 , nix-expr
@@ -56,7 +57,12 @@ mkMesonDerivation (finalAttrs: {
     git
     mercurial
   ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+    # For various sandboxing tests that needs a statically-linked shell,
+    # etc.
     busybox-sandbox-shell
+    # For Overlay FS tests
+    unixtools.mount
+    unixtools.umount
   ];
 
   nativeBuildInputs = finalAttrs.passthru.baseNativeBuildInputs ++ [
