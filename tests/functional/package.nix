@@ -20,6 +20,8 @@
 , gtest
 , runCommand
 
+, busybox-sandbox-shell ? null
+
 # Configuration Options
 
 , version
@@ -43,7 +45,8 @@ mkMesonDerivation (finalAttrs: {
     ./.
   ];
 
-  nativeBuildInputs = [
+  # Hack for sake of the dev shell
+  passthru.baseNativeBuildInputs = [
     meson
     ninja
     pkg-config
@@ -52,7 +55,11 @@ mkMesonDerivation (finalAttrs: {
     jq
     git
     mercurial
+  ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+    busybox-sandbox-shell
+  ];
 
+  nativeBuildInputs = finalAttrs.baseNativeBuildInputs ++ [
     nix-ng
   ];
 
