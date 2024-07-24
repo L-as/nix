@@ -267,10 +267,10 @@ connected:
         AutoCloseFD uploadLock;
         {
             auto setUpdateLock = [&](auto && fileName){
-                uploadLock = openLockFile(currentLoad + "/" + fileName + ".upload-lock", true);
+                uploadLock = openLockFile(currentLoad + "/" + escapeUri(fileName) + ".upload-lock", true);
             };
             try {
-                setUpdateLock(escapeUri(storeUri.render()));
+                setUpdateLock(storeUri.render());
             } catch (SysError & e) {
                 if (e.errNo != ENAMETOOLONG) throw;
                 // Try again hashing the store URL so we have a shorter path
