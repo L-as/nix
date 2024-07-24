@@ -34,8 +34,10 @@ subdir('build-utils-meson/export-all-symbols')
 
 configdata = configuration_data()
 
+fs = import('fs')
+
 bindir = get_option('bindir')
-if not import('fs').is_absolute(bindir)
+if not fs.is_absolute(bindir)
   bindir = get_option('prefix') / bindir
 endif
 configdata.set_quoted('NIX_BIN_DIR', bindir)
@@ -215,6 +217,14 @@ foreach linkname : nix_symlinks
     # The 'runtime' tag is what executables default to, which we want to emulate here.
     install_tag : 'runtime'
   )
+  t = custom_target(
+    command: ['ln', '-sf', fs.name(this_exe), '@OUTPUT@'],
+    output: linkname,
+    # TODO(Ericson2314): Don't do this once we have the `meson.override_find_program` working)
+    build_by_default: true
+  )
+  # TODO(Ericson3214): Dosen't yet work
+  #meson.override_find_program(linkname, t)
 endforeach
 
 install_symlink(
@@ -224,3 +234,12 @@ install_symlink(
   # The 'runtime' tag is what executables default to, which we want to emulate here.
   install_tag : 'runtime'
 )
+
+custom_target(
+  command: ['ln', '-sf', fs.name(this_exe), '@OUTPUT@'],
+  output: 'build-remote',
+  # TODO(Ericson2314): Don't do this once we have the `meson.override_find_program` working)
+  build_by_default: true
+)
+# TODO(Ericson3214): Dosen't yet work
+#meson.override_find_program(linkname, t)
