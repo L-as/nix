@@ -19,6 +19,7 @@
 #include "network-proxy.hh"
 #include "eval-cache.hh"
 #include "flake/flake.hh"
+#include "bin-dir.hh"
 
 #include <sys/types.h>
 #include <regex>
@@ -365,6 +366,7 @@ void mainWrapped(int argc, char * * argv)
     initNix();
     initGC();
     flake::initLib(flakeSettings);
+    setNixBuildRemoteLocation();
 
     #if __linux__
     if (isRootUser()) {

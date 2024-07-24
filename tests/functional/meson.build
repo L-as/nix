@@ -238,8 +238,6 @@ foreach suite : suites
         'TEST_NAME': name,
         'NIX_REMOTE': '',
         'PS4': '+(${BASH_SOURCE[0]-$0}:$LINENO) ',
-        # TODO Fix configuration so the default for this is no longer wrong
-        'NIX_BIN_DIR': nix_bin_dir,
       },
       # some tests take 15+ seconds even on an otherwise idle machine, on a loaded machine
       # this can easily drive them to failure. give them more time, 5min rather than 30sec

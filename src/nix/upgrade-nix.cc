@@ -8,6 +8,7 @@
 #include "attr-path.hh"
 #include "names.hh"
 #include "progress-bar.hh"
+#include "bin-dir.hh"
 
 using namespace nix;
 
@@ -92,7 +93,7 @@ struct CmdUpgradeNix : MixDryRun, StoreCommand
         {
             Activity act(*logger, lvlInfo, actUnknown,
                 fmt("installing '%s' into profile '%s'...", store->printStorePath(storePath), profileDir));
-            runProgram(settings.nixBinDir + "/nix-env", false,
+            runProgram(getNixBinDir() + "/nix-env", false,
                 {"--profile", profileDir, "-i", store->printStorePath(storePath), "--no-sandbox"});
         }
 
