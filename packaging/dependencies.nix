@@ -63,9 +63,16 @@ let
 
   # Work around weird `--as-needed` linker behavior with BSD, see
   # https://github.com/mesonbuild/meson/issues/3593
-  bsdNoLinkAsNeeded = finalAttrs: prevAttrs: lib.optionalAttrs stdenv.hostPlatform.isBSD {
-    mesonFlags = [ (lib.mesonBool "b_asneeded" false) ] ++ prevAttrs.mesonFlags or [];
-  };
+  bsdNoLinkAsNeeded = finalAttrs: prevAttrs:
+    lib.optionalAttrs stdenv.hostPlatform.isBSD {
+      mesonFlags = [ (lib.mesonBool "b_asneeded" false) ] ++ prevAttrs.mesonFlags or [];
+    };
+
+  miscGoodPractice = finalAttrs: prevAttrs:
+    {
+      strictDeps = prevAttrs.strictDeps or true;
+      enableParallelBuilding = true;
+    };
 
 in
 scope: {
@@ -138,6 +145,6 @@ scope: {
 
   mkMesonDerivation = f: stdenv.mkDerivation
     (lib.extends
-      (lib.composeExtensions bsdNoLinkAsNeeded localSourceLayer)
+      (lib.composeExtensions miscGoodPractice bsdNoLinkAsNeeded localSourceLayer)
       f);
 }

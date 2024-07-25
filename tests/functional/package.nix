@@ -86,11 +86,7 @@ mkMesonDerivation (finalAttrs: {
     "--verbose"
   ];
 
-  enableParallelBuilding = true;
-
   doCheck = true;
-
-  strictDeps = true;
 
   meta = {
     platforms = lib.platforms.unix;
