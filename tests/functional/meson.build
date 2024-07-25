@@ -62,6 +62,7 @@ suites = [
       'remote-store.sh',
       'legacy-ssh-store.sh',
       'lang.sh',
+      'lang-gc.sh',
       'characterisation-test-infra.sh',
       'experimental-features.sh',
       'fetchMercurial.sh',
