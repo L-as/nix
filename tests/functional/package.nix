@@ -41,6 +41,7 @@ mkMesonDerivation (finalAttrs: {
 
   workDir = ./.;
   fileset = fileset.unions [
+    ../../scripts/nix-profile.sh.in
     ../../.version
     ../../tests/functional
     ./.
@@ -74,12 +75,20 @@ mkMesonDerivation (finalAttrs: {
     nix-expr
   ];
 
+
   preConfigure =
     # "Inline" .version so it's not a symlink, and includes the suffix.
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
       echo ${version} > ../../../.version
+    ''
+    # TEMP hack for Meson before make is gone, where
+    # `src/nix-functional-tests` is during the transition a symlink and
+    # not the actual directory directory.
+    + ''
+      cd $(readlink -e $PWD)
+      echo $PWD | grep tests/functional
     '';
 
   mesonCheckFlags = [
@@ -87,6 +96,10 @@ mkMesonDerivation (finalAttrs: {
   ];
 
   doCheck = true;
+
+  installPhase = ''
+    touch $out
+  '';
 
   meta = {
     platforms = lib.platforms.unix;
