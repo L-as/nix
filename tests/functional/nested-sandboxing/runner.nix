@@ -8,6 +8,7 @@ mkDerivation {
   EXTRA_SANDBOX = builtins.getEnv "EXTRA_SANDBOX";
   buildCommand = ''
     set -x
+    set -eu -o pipefail
   '' + (if altitude == 0 then ''
     echo Deep enough! > $out
   '' else ''

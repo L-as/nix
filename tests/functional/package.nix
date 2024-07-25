@@ -11,7 +11,7 @@
 , jq
 , git
 , mercurial
-, unixtools
+, util-linux
 
 , nix-store
 , nix-expr
@@ -60,9 +60,9 @@ mkMesonDerivation (finalAttrs: {
     # For various sandboxing tests that needs a statically-linked shell,
     # etc.
     busybox-sandbox-shell
-    # For Overlay FS tests
-    unixtools.mount
-    unixtools.umount
+    # For Overlay FS tests need `mount`, `umount`, and `unshare`.
+    # TODO use `unixtools` to be precise over which executables instead?
+    util-linux
   ];
 
   nativeBuildInputs = finalAttrs.passthru.baseNativeBuildInputs ++ [
