@@ -83,7 +83,7 @@ mkMesonDerivation (finalAttrs: {
     '';
 
   mesonCheckFlags = [
-    "--verbose"
+    "--print-errorlogs"
   ];
 
   doCheck = true;
