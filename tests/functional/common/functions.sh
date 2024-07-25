@@ -232,6 +232,7 @@ enableFeatures() {
 }
 
 onError() {
+    set +x
     echo "$0: test failed at:" >&2
     for ((i = 1; i < ${#BASH_SOURCE[@]}; i++)); do
         if [[ -z ${BASH_SOURCE[i]} ]]; then break; fi
