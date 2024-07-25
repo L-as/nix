@@ -22,6 +22,18 @@ run_command(
   meson.current_source_dir() / '',
   meson.current_build_dir() / '',
 )
+# This current-source-escaping relative is no good because we don't know
+# where the build directory will be, therefore we fix it up. Once the
+# Make build system is gone, we should think about doing this better.
+scripts_dir = fs.relative_to(
+  meson.current_source_dir() / '..' / '..' / 'scripts',
+  meson.current_build_dir(),
+)
+run_command(
+  'sed',
+  '-i', meson.current_build_dir() / 'bash-profile.sh',
+  '-e', 's^../../scripts^@0@^'.format(scripts_dir),
+)
 
 nix = find_program('nix')
 bash = find_program('bash', native : true)
