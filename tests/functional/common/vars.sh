@@ -6,8 +6,6 @@ if [[ -z "${COMMON_VARS_SH_SOURCED-}" ]]; then
 
 COMMON_VARS_SH_SOURCED=1
 
-set +x
-
 commonDir="$(readlink -f "$(dirname "${BASH_SOURCE[0]-$0}")")"
 
 # Since this is a generated filaree
@@ -70,7 +68,5 @@ cacheDir=$TEST_ROOT/binary-cache
 if [[ $(uname) == Linux ]] && [[ -L /proc/self/ns/user ]] && unshare --user true; then
     _canUseSandbox=1
 fi
-
-set -x
 
 fi # COMMON_VARS_SH_SOURCED

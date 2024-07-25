@@ -6,8 +6,6 @@ if [[ -z "${COMMON_FUNCTIONS_SH_SOURCED-}" ]]; then
 
 COMMON_FUNCTIONS_SH_SOURCED=1
 
-set +x
-
 isTestOnNixOS() {
   [[ "${isTestOnNixOS:-}" == 1 ]]
 }
@@ -233,10 +231,7 @@ enableFeatures() {
     sed -i 's/experimental-features .*/& '"$features"'/' "${test_nix_conf?}"
 }
 
-set -x
-
 onError() {
-    set +x
     echo "$0: test failed at:" >&2
     for ((i = 1; i < ${#BASH_SOURCE[@]}; i++)); do
         if [[ -z ${BASH_SOURCE[i]} ]]; then break; fi

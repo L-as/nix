@@ -16,8 +16,6 @@ source "$commonDir/subst-vars.sh"
 # Make sure shellcheck knows this will be defined by the above generated snippet
 : "${bash?}" "${bindir?}"
 
-set +x
-
 if ! isTestOnNixOS; then
   export SHELL="$bash"
   export PATH="$bindir:$PATH"
@@ -31,7 +29,5 @@ DAEMON_PATH="$PATH"
 if [[ -n "${NIX_DAEMON_PACKAGE:-}" ]]; then
   DAEMON_PATH="${NIX_DAEMON_PACKAGE}/bin:$DAEMON_PATH"
 fi
-
-set -x
 
 fi # COMMON_PATHS_SH_SOURCED
