@@ -17,7 +17,7 @@ void runNix(Path program, const Strings & args,
     subprocessEnv["NIX_CONFIG"] = globalConfig.toKeyValue();
     //isInteractive avoid grabling interactive commands
     runProgram2(RunOptions {
-        .program = getNixBinDir() + "/" + program,
+        .program = getNixBin(program).string(),
         .args = args,
         .environment = subprocessEnv,
         .input = input,

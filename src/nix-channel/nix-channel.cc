@@ -68,7 +68,7 @@ static void removeChannel(const std::string & name)
     channels.erase(name);
     writeChannels();
 
-    runProgram(getNixBinDir() + "/nix-env", true, { "--profile", profile, "--uninstall", name });
+    runProgram(getNixBin("nix-env").string(), true, { "--profile", profile, "--uninstall", name });
 }
 
 static Path nixDefExpr;
@@ -119,7 +119,7 @@ static void update(const StringSet & channelNames)
 
             bool unpacked = false;
             if (std::regex_search(filename, std::regex("\\.tar\\.(gz|bz2|xz)$"))) {
-                runProgram(getNixBinDir() + "/nix-build", false, { "--no-out-link", "--expr", "import " + unpackChannelPath +
+                runProgram(getNixBin("nix-build").string(), false, { "--no-out-link", "--expr", "import " + unpackChannelPath +
                             "{ name = \"" + cname + "\"; channelName = \"" + name + "\"; src = builtins.storePath \"" + filename + "\"; }" });
                 unpacked = true;
             }
@@ -144,7 +144,7 @@ static void update(const StringSet & channelNames)
     for (auto & expr : exprs)
         envArgs.push_back(std::move(expr));
     envArgs.push_back("--quiet");
-    runProgram(getNixBinDir() + "/nix-env", false, envArgs);
+    runProgram(getNixBin("nix-env").string(), false, envArgs);
 
     // Make the channels appear in nix-env.
     struct stat st;
@@ -245,7 +245,7 @@ static int main_nix_channel(int argc, char ** argv)
             case cListGenerations:
                 if (!args.empty())
                     throw UsageError("'--list-generations' expects no arguments");
-                std::cout << runProgram(getNixBinDir() + "/nix-env", false, {"--profile", profile, "--list-generations"}) << std::flush;
+                std::cout << runProgram(getNixBin("nix-env").string(), false, {"--profile", profile, "--list-generations"}) << std::flush;
                 break;
             case cRollback:
                 if (args.size() > 1)
@@ -257,7 +257,7 @@ static int main_nix_channel(int argc, char ** argv)
                 } else {
                     envArgs.push_back("--rollback");
                 }
-                runProgram(getNixBinDir() + "/nix-env", false, envArgs);
+                runProgram(getNixBin("nix-env").string(), false, envArgs);
                 break;
         }
 

@@ -1,14 +1,14 @@
 #pragma once
 ///@file
 
-#include "types.hh"
+#include <filesystem>
 
 namespace nix {
 
 /**
- * The directory where the main programs are stored.
+ * Get a path to the given Nix binary
  */
-const Path & getNixBinDir();
+std::filesystem::path getNixBin(std::string_view binary_name);
 
 /**
  * @TODO update docs to match status quo, where NIX_BIN_DIR is not defined for libraries
