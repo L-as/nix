@@ -143,8 +143,14 @@ scope: {
 
   inherit resolvePath filesetToSource;
 
-  mkMesonDerivation = f: stdenv.mkDerivation
-    (lib.extends
-      (lib.composeExtensions miscGoodPractice bsdNoLinkAsNeeded localSourceLayer)
-      f);
+  mkMesonDerivation = f: let
+    exts = [
+      miscGoodPractice
+      bsdNoLinkAsNeeded
+      localSourceLayer
+    ];
+  in stdenv.mkDerivation
+   (lib.extends
+     (lib.foldr lib.composeExtensions (_: _: {}) exts)
+     f);
 }
