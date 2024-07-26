@@ -34,28 +34,28 @@ std::coroutine_handle<> nix::Goal::promise_type::final_awaiter::await_suspend(ha
         // We still have a continuation, i.e. work to do.
         // We assert that the goal is still busy.
         assert(goal->exitCode == ecBusy);
-        assert(goal->top_co); // Goal must have an active coroutine.
-        assert(goal->top_co->handle == h); // The active coroutine must be us.
+        assert(goal->cur_co); // Goal must have an active coroutine.
+        assert(goal->cur_co->handle == h); // The active coroutine must be us.
         assert(p.alive); // We must not have been destructed.
 
         // we move continuation to the top,
-        // note: previous top_co is actually h, so by moving into it,
+        // note: previous cur_co is actually h, so by moving into it,
         // we're calling the destructor on h, DON'T use h and p after this!
 
-        // We move our continuation into `top_co`, i.e. the marker for the active continuation.
-        // By doing this we destruct the old `top_co`, i.e. us, so `h` can't be used anymore.
+        // We move our continuation into `cur_co`, i.e. the marker for the active continuation.
+        // By doing this we destruct the old `cur_co`, i.e. us, so `h` can't be used anymore.
         // Be careful not to access freed memory!
-        goal->top_co = std::move(c);
+        goal->cur_co = std::move(c);
 
-        // We resume `top_co`.
-        return goal->top_co->handle;
+        // We resume `cur_co`.
+        return goal->cur_co->handle;
     } else {
         // We have no continuation, i.e. no more work to do,
         // so the goal must not be busy anymore.
         assert(goal->exitCode != ecBusy);
 
-        // We reset `top_co` for good measure.
-        p.goal->top_co = {};
+        // We reset `cur_co` for good measure.
+        p.goal->cur_co = {};
 
         // We jump to the noop coroutine, which doesn't do anything and immediately suspends.
         // This passes control back to the caller of goal.work().
@@ -85,9 +85,9 @@ std::coroutine_handle<> nix::Goal::Co::await_suspend(handle_type caller) {
     auto goal = caller.promise().goal;
     assert(goal);
     p.goal = goal;
-    p.continuation = std::move(goal->top_co); // we set our continuation to be top_co (i.e. caller)
-    goal->top_co = std::move(*this); // we set top_co to ourselves, don't use this anymore after this!
-    return p.goal->top_co->handle; // we execute ourselves
+    p.continuation = std::move(goal->cur_co); // we set our continuation to be cur_co (i.e. caller)
+    goal->cur_co = std::move(*this); // we set cur_co to ourselves, don't use this anymore after this!
+    return p.goal->cur_co->handle; // we execute ourselves
 }
 
 bool CompareGoalPtrs::operator() (const GoalPtr & a, const GoalPtr & b) const {
@@ -164,7 +164,7 @@ void Goal::waiteeDone(GoalPtr waitee, ExitCode result)
 Goal::Done Goal::amDone(ExitCode result, std::optional<Error> ex)
 {
     trace("done");
-    assert(top_co);
+    assert(cur_co);
     assert(exitCode == ecBusy);
     assert(result == ecSuccess || result == ecFailed || result == ecNoSubstituters || result == ecIncompleteClosure);
     exitCode = result;
@@ -187,9 +187,9 @@ Goal::Done Goal::amDone(ExitCode result, std::optional<Error> ex)
 
     // We drop the continuation.
     // In `final_awaiter` this will signal that there is no more work to be done.
-    top_co->handle.promise().continuation = {};
+    cur_co->handle.promise().continuation = {};
 
-    // won't return to caller because of logic in final_awaiter
+    // Coroutines can `co_return` this conveniently, to end themselves.
     return Done{};
 }
 
@@ -201,13 +201,13 @@ void Goal::trace(std::string_view s)
 
 void Goal::work()
 {
-    assert(top_co);
-    assert(top_co->handle);
-    assert(top_co->handle.promise().alive);
-    top_co->handle.resume();
+    assert(cur_co);
+    assert(cur_co->handle);
+    assert(cur_co->handle.promise().alive);
+    cur_co->handle.resume();
     // We either should be in a state where we can be work()-ed again,
     // or we should be done.
-    assert(top_co || exitCode != ecBusy);
+    assert(cur_co || exitCode != ecBusy);
 }
 
 

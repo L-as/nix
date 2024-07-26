@@ -81,7 +81,7 @@ class Goal : public std::enable_shared_from_this<Goal>
      */
     size_t nrIncompleteClosure = 0;
 
-    // FIXME(@L-as): Remove, sets nrFailed, etc. to 0 some times.
+    // FIXME(@L-as): Remove this, it sets nrFailed, etc. to 0 some times.
     friend class DerivationGoal;
 
 public:
@@ -244,8 +244,8 @@ private:
         {
             assert(handle);
             assert(handle.promise().goal);                           // goal must be set
-            assert(handle.promise().goal->top_co);                   // top_co of goal must be set
-            assert(handle.promise().goal->top_co->handle == handle); // top_co of goal must be us
+            assert(handle.promise().goal->cur_co);                   // cur_co of goal must be set
+            assert(handle.promise().goal->cur_co->handle == handle); // cur_co of goal must be us
         }
     };
 
@@ -304,7 +304,7 @@ private:
         /**
          * Called by compiler generated code before body of coroutine.
          * We use this opportunity to set the @ref goal field
-         * and `top_co` field of @ref Goal.
+         * and `cur_co` field of @ref Goal.
          */
         InitialSuspend initial_suspend()
         {
@@ -381,7 +381,7 @@ private:
      * coroutine executed.
      * Destroying this should destroy all coroutines created for this goal.
      */
-    std::optional<Co> top_co;
+    std::optional<Co> cur_co;
 
     /**
      * The entry point for the goal
@@ -476,13 +476,13 @@ public:
     }
 
     Goal(Worker & worker, DerivedPath path)
-        : top_co(init_wrapper())
+        : cur_co(init_wrapper())
         , worker(worker)
     {
-        // top_co shouldn't have a goal already, should be nullptr.
-        assert(!top_co->handle.promise().goal);
-        // we set it such that top_co can pass it down to its subcoroutines.
-        top_co->handle.promise().goal = this;
+        // cur_co shouldn't have a goal already, should be nullptr.
+        assert(!cur_co->handle.promise().goal);
+        // we set it such that cur_co can pass it down to its subcoroutines.
+        cur_co->handle.promise().goal = this;
     }
 
     virtual ~Goal()
