@@ -185,7 +185,6 @@ class DerivationGoal : public Goal
     Co haveDerivation();
     Co outputsSubstitutionTried();
     Co gaveUpOnSubstitution();
-    Co closureRepaired();
     Co inputsRealised();
 
     virtual Co tryLocalBuild();

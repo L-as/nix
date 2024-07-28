@@ -185,9 +185,8 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
 
     unsigned int curBuilds = worker.getNrLocalBuilds();
     if (curBuilds >= settings.maxBuildJobs) {
-        worker.waitForBuildSlot(shared_from_this());
         outputLocks.unlock();
-        co_await Suspend{};
+        co_await waitForBuildSlot();
         co_return tryToBuild();
     }
 
@@ -241,8 +240,7 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
             if (!actLock)
                 actLock = std::make_unique<Activity>(*logger, lvlWarn, actBuildWaiting,
                     fmt("waiting for a free build user ID for '%s'", Magenta(worker.store.printStorePath(getDrvPath()))));
-            worker.waitForAWhile(shared_from_this());
-            co_await Suspend{};
+            co_await waitForAWhile();
             co_return tryLocalBuild();
         }
     }
@@ -276,8 +274,7 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
         }, r);
         if (do_break) break;
     }
-    worker.wakeUp(shared_from_this());
-    co_await Suspend{};
+    co_await nap();
     // after EOF on child
     co_return buildDone();
 }

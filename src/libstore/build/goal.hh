@@ -95,14 +95,14 @@ private:
      */
     ExitCode exitCode = ecBusy;
 
-protected:
-
     /**
      * Suspend our goal and wait until we get @ref work()-ed again.
      * `co_await`-able by @ref Co.
      */
     struct Suspend
     {};
+
+protected:
 
     /**
      * Wait for a child to give information back.
@@ -506,6 +506,27 @@ protected:
     void addWaitee(GoalPtr waitee);
 
     virtual void waiteeDone(GoalPtr waitee, ExitCode result);
+
+    /**
+     * Take a "power nap".
+     * Suspend the goal momentarily then begin in the next "step" of the worker.
+     */
+    Co nap();
+
+    /**
+     * Wait for all subgoals to end if there are any.
+     */
+    Co waitForWaitees();
+
+    /**
+     * Wait for a build slot to become available.
+     */
+    Co waitForBuildSlot();
+
+    /**
+     * Wait for a while.
+     */
+    Co waitForAWhile();
 
 public:
 

@@ -77,9 +77,7 @@ Goal::Co DrvOutputSubstitutionGoal::init()
         // We want to call `childTerminated`, but that's illegal to call
         // at this point after `WaitChild`, because we're iterating over `worker.children`,
         // meaning we can't remove from it, I think anyway. Let's not do it.
-        worker.wakeUp(shared_from_this());
-
-        co_await Suspend{};
+        co_await nap();
 
         worker.childTerminated(this);
 
@@ -146,8 +144,7 @@ DrvOutputSubstitutionGoal::realisationFetched(std::shared_ptr<const Realisation>
 {
     addWaitee(worker.makePathSubstitutionGoal(outputInfo->outPath));
 
-    if (!waitees.empty())
-        co_await Suspend{};
+    co_await waitForWaitees();
 
     trace("output path substituted");
 

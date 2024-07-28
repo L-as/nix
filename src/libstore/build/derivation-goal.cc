@@ -154,7 +154,8 @@ Goal::Co DerivationGoal::getDerivation()
 
     addWaitee(upcast_goal(worker.makePathSubstitutionGoal(drvPath)));
 
-    co_await Suspend{};
+    co_await waitForWaitees();
+
     co_return loadDerivation();
 }
 
@@ -267,7 +268,7 @@ Goal::Co DerivationGoal::haveDerivation()
             }
         }
 
-    if (!waitees.empty()) co_await Suspend{}; /* to prevent hang (no wake-up event) */
+    co_await waitForWaitees();
     co_return outputsSubstitutionTried();
 }
 
@@ -398,7 +399,7 @@ Goal::Co DerivationGoal::gaveUpOnSubstitution()
         addWaitee(upcast_goal(worker.makePathSubstitutionGoal(i)));
     }
 
-    if (!waitees.empty()) co_await Suspend{}; /* to prevent hang (no wake-up event) */
+    co_await waitForWaitees();
     co_return inputsRealised();
 }
 
@@ -456,21 +457,14 @@ Goal::Co DerivationGoal::repairClosure()
                 bmRepair));
     }
 
-    if (waitees.empty()) {
-        co_return done(BuildResult::AlreadyValid, assertPathValidity());
-    } else {
-        co_await Suspend{};
-        co_return closureRepaired();
-    }
-}
+    co_await waitForWaitees();
 
-
-Goal::Co DerivationGoal::closureRepaired()
-{
     trace("closure repaired");
+
     if (getNrFailed() > 0)
         throw Error("some paths in the output closure of derivation '%s' could not be repaired",
             worker.store.printStorePath(drvPath));
+
     co_return done(BuildResult::AlreadyValid, assertPathValidity());
 }
 
@@ -555,7 +549,8 @@ Goal::Co DerivationGoal::inputsRealised()
                 pathResolved, wantedOutputs, buildMode);
             addWaitee(resolvedDrvGoal);
 
-            co_await Suspend{};
+            co_await waitForWaitees();
+
             co_return resolvedFinished();
         }
 
@@ -620,8 +615,7 @@ Goal::Co DerivationGoal::inputsRealised()
     /* Okay, try to build.  Note that here we don't wait for a build
        slot to become available, since we don't need one if there is a
        build hook. */
-    worker.wakeUp(shared_from_this());
-    co_await Suspend{};
+    co_await nap();
     co_return tryToBuild();
 }
 
@@ -682,8 +676,7 @@ Goal::Co DerivationGoal::tryToBuild()
         if (!actLock)
             actLock = std::make_unique<Activity>(*logger, lvlWarn, actBuildWaiting,
                 fmt("waiting for lock on %s", Magenta(showPaths(lockFiles))));
-        worker.waitForAWhile(shared_from_this());
-        co_await Suspend{};
+        co_await waitForAWhile();
         co_return tryToBuild();
     }
 
@@ -742,8 +735,7 @@ Goal::Co DerivationGoal::tryToBuild()
                     }, r);
                     if (do_break) break;
                 }
-                worker.wakeUp(shared_from_this());
-                co_await Suspend{};
+                co_await nap();
                 co_return buildDone();
             case rpPostpone:
                 /* Not now; wait until at least one child finishes or
@@ -751,9 +743,8 @@ Goal::Co DerivationGoal::tryToBuild()
                 if (!actLock)
                     actLock = std::make_unique<Activity>(*logger, lvlWarn, actBuildWaiting,
                         fmt("waiting for a machine to build '%s'", Magenta(worker.store.printStorePath(drvPath))));
-                worker.waitForAWhile(shared_from_this());
                 outputLocks.unlock();
-                co_await Suspend{};
+                co_await waitForAWhile();
                 co_return tryToBuild();
             case rpDecline:
                 /* We should do it ourselves. */
@@ -763,8 +754,7 @@ Goal::Co DerivationGoal::tryToBuild()
 
     actLock.reset();
 
-    worker.wakeUp(shared_from_this());
-    co_await Suspend{};
+    co_await nap();
     co_return tryLocalBuild();
 }
 

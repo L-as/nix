@@ -247,4 +247,32 @@ void Goal::handleEOF(Descriptor fd)
     work();
 }
 
+Goal::Co Goal::nap()
+{
+    worker.wakeUp(shared_from_this());
+    co_await Suspend{};
+    co_return Return{};
+}
+
+Goal::Co Goal::waitForWaitees()
+{
+    if (!waitees.empty())
+        co_await Suspend{};
+    co_return Return{};
+}
+
+Goal::Co Goal::waitForBuildSlot()
+{
+    worker.waitForBuildSlot(shared_from_this());
+    co_await Suspend{};
+    co_return Return{};
+}
+
+Goal::Co Goal::waitForAWhile()
+{
+    worker.waitForAWhile(shared_from_this());
+    co_await Suspend{};
+    co_return Return{};
+}
+
 }
