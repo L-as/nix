@@ -521,10 +521,11 @@ void LocalDerivationGoal::startBuilder()
        place. */
     topTmpDir = createTempDir(settings.buildDir.get().value_or(""), "nix-build-" + std::string(getDrvPath().name()), false, false, 0700);
 #if __APPLE__
-    if (false) {
+    if (false)
 #else
-    if (useChroot) {
+    if (useChroot)
 #endif
+    {
         /* If sandboxing is enabled, put the actual TMPDIR underneath
            an inaccessible root-owned directory, to prevent outside
            access.
