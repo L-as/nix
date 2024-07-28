@@ -7,17 +7,13 @@
 namespace nix {
 
 DrvOutputSubstitutionGoal::DrvOutputSubstitutionGoal(
-    const DrvOutput & id,
-    Worker & worker,
-    RepairFlag repair,
-    std::optional<ContentAddress> ca)
-    : Goal(worker, DerivedPath::Opaque { StorePath::dummy })
+    const DrvOutput & id, Worker & worker, RepairFlag repair, std::optional<ContentAddress> ca)
+    : Goal(worker, DerivedPath::Opaque{StorePath::dummy})
     , id(id)
 {
     name = fmt("substitution of '%s'", id.to_string());
     trace("created");
 }
-
 
 Goal::Co DrvOutputSubstitutionGoal::init()
 {
@@ -39,41 +35,44 @@ Goal::Co DrvOutputSubstitutionGoal::init()
            some other error occurs), so it must not touch `this`. So put
            the shared state in a separate refcounted object. */
         auto outPipe = std::make_shared<MuxablePipe>();
-    #ifndef _WIN32
+#ifndef _WIN32
         outPipe->create();
-    #else
+#else
         outPipe->createAsyncPipe(worker.ioport.get());
-    #endif
+#endif
 
         auto promise = std::make_shared<std::promise<std::shared_ptr<const Realisation>>>();
 
         sub->queryRealisation(
-            id,
-            { [outPipe(outPipe), promise(promise)](std::future<std::shared_ptr<const Realisation>> res) {
+            id, {[outPipe(outPipe), promise(promise)](std::future<std::shared_ptr<const Realisation>> res) {
                 try {
                     Finally updateStats([&]() { outPipe->writeSide.close(); });
                     promise->set_value(res.get());
                 } catch (...) {
                     promise->set_exception(std::current_exception());
                 }
-            } });
+            }});
 
-        worker.childStarted(shared_from_this(), {
-    #ifndef _WIN32
-            outPipe->readSide.get()
-    #else
-            &*outPipe
-    #endif
-        }, true, false);
+        worker.childStarted(
+            shared_from_this(),
+            {
+#ifndef _WIN32
+                outPipe->readSide.get()
+#else
+                &*outPipe
+#endif
+            },
+            true,
+            false);
 
         WaitChildReturn r = co_await WaitChild{};
 
-        std::visit(overloaded {
-            [](ChildEOF _) {},
-            [](ChildOutput _) {
-                throw new Error("this shouldn't happen");
+        std::visit(
+            overloaded{
+                [](ChildEOF _) {},
+                [](ChildOutput _) { throw new Error("this shouldn't happen"); },
             },
-        }, r);
+            r);
 
         // We want to call `childTerminated`, but that's illegal to call
         // at this point after `WaitChild`, because we're iterating over `worker.children`,
@@ -97,7 +96,8 @@ Goal::Co DrvOutputSubstitutionGoal::init()
             substituterFailed = true;
         }
 
-        if (!outputInfo) continue;
+        if (!outputInfo)
+            continue;
 
         bool failed = false;
 
@@ -112,8 +112,7 @@ Goal::Co DrvOutputSubstitutionGoal::init()
                         sub->getUri(),
                         depId.to_string(),
                         worker.store.printStorePath(localOutputInfo->outPath),
-                        worker.store.printStorePath(depPath)
-                    );
+                        worker.store.printStorePath(depPath));
                     failed = true;
                     break;
                 }
@@ -121,7 +120,8 @@ Goal::Co DrvOutputSubstitutionGoal::init()
             }
         }
 
-        if (failed) continue;
+        if (failed)
+            continue;
 
         co_return realisationFetched(outputInfo, sub);
     }
@@ -141,10 +141,13 @@ Goal::Co DrvOutputSubstitutionGoal::init()
     co_return amDone(substituterFailed ? ecFailed : ecNoSubstituters);
 }
 
-Goal::Co DrvOutputSubstitutionGoal::realisationFetched(std::shared_ptr<const Realisation> outputInfo, nix::ref<nix::Store> sub) {
+Goal::Co
+DrvOutputSubstitutionGoal::realisationFetched(std::shared_ptr<const Realisation> outputInfo, nix::ref<nix::Store> sub)
+{
     addWaitee(worker.makePathSubstitutionGoal(outputInfo->outPath));
 
-    if (!waitees.empty()) co_await Suspend{};
+    if (!waitees.empty())
+        co_await Suspend{};
 
     trace("output path substituted");
 
@@ -165,6 +168,5 @@ std::string DrvOutputSubstitutionGoal::key()
        goals. */
     return "a$" + std::string(id.to_string());
 }
-
 
 }
