@@ -236,7 +236,7 @@ Goal::Co PathSubstitutionGoal::tryToRun(
         bool do_break = false;
         std::visit(
             overloaded{
-                [&do_break](ChildEOF _) {  do_break = true; },
+                [&do_break](ChildEOF _) { do_break = true; },
                 [](ChildOutput _) {},
             },
             r);
