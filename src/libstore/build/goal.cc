@@ -18,6 +18,15 @@ nix::Goal::Co::~Co() {
     }
 }
 
+nix::Goal::WaitChildReturn nix::Goal::WaitChildAwaiter::await_resume() {
+  assert(handle.promise().waitChildReturn.has_value());
+  return std::move(*handle.promise().waitChildReturn);
+}
+
+void nix::Goal::SuspendAwaiter::await_resume() {
+  assert(!handle.promise().waitChildReturn.has_value());
+}
+
 nix::Goal::Co nix::Goal::promise_type::get_return_object() {
     auto handle = handle_type::from_promise(*this);
     return Co{handle};
@@ -87,7 +96,7 @@ std::coroutine_handle<> nix::Goal::Co::await_suspend(handle_type caller) {
     p.goal = goal;
     p.continuation = std::move(goal->cur_co); // we set our continuation to be cur_co (i.e. caller)
     goal->cur_co = std::move(*this); // we set cur_co to ourselves, don't use this anymore after this!
-    return p.goal->cur_co->handle; // we execute ourselves
+    return goal->cur_co->handle; // we execute ourselves
 }
 
 bool CompareGoalPtrs::operator() (const GoalPtr & a, const GoalPtr & b) const {
@@ -208,6 +217,22 @@ void Goal::work()
     // We either should be in a state where we can be work()-ed again,
     // or we should be done.
     assert(cur_co || exitCode != ecBusy);
+}
+
+void Goal::handleChildOutput(Descriptor fd, std::string_view data) {
+    assert(cur_co);
+    assert(cur_co->handle);
+    assert(!cur_co->handle.promise().waitChildReturn.has_value());
+    cur_co->handle.promise().waitChildReturn = ChildOutput{fd, data};
+    work();
+}
+
+void Goal::handleEOF(Descriptor fd) {
+    assert(cur_co);
+    assert(cur_co->handle);
+    assert(!cur_co->handle.promise().waitChildReturn.has_value());
+    cur_co->handle.promise().waitChildReturn = ChildEOF{fd};
+    work();
 }
 
 

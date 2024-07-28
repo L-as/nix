@@ -224,6 +224,18 @@ Goal::Co PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, 
 #endif
     }, true, false);
 
+    for (;;) {
+        WaitChildReturn r = co_await WaitChild{};
+        bool do_break = false;
+        std::visit(overloaded {
+            [&do_break](ChildEOF _) {do_break = true;},
+            [](ChildOutput _) {},
+        }, r);
+        if (do_break) break;
+    }
+
+    worker.wakeUp(shared_from_this());
+
     co_await Suspend{};
 
     trace("substitute finished");
@@ -273,13 +285,6 @@ Goal::Co PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, 
 
     co_return done(ecSuccess, BuildResult::Substituted);
 }
-
-
-void PathSubstitutionGoal::handleEOF(Descriptor fd)
-{
-    worker.wakeUp(shared_from_this());
-}
-
 
 void PathSubstitutionGoal::cleanup()
 {

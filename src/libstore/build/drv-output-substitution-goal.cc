@@ -66,6 +66,20 @@ Goal::Co DrvOutputSubstitutionGoal::init()
     #endif
         }, true, false);
 
+        WaitChildReturn r = co_await WaitChild{};
+
+        std::visit(overloaded {
+            [](ChildEOF _) {},
+            [](ChildOutput _) {
+                throw new Error("this shouldn't happen");
+            },
+        }, r);
+
+        // We want to call `childTerminated`, but that's illegal to call
+        // at this point after `WaitChild`, because we're iterating over `worker.children`,
+        // meaning we can't remove from it, I think anyway. Let's not do it.
+        worker.wakeUp(shared_from_this());
+
         co_await Suspend{};
 
         worker.childTerminated(this);
@@ -150,11 +164,6 @@ std::string DrvOutputSubstitutionGoal::key()
     /* "a$" ensures substitution goals happen before derivation
        goals. */
     return "a$" + std::string(id.to_string());
-}
-
-void DrvOutputSubstitutionGoal::handleEOF(Descriptor fd)
-{
-    worker.wakeUp(shared_from_this());
 }
 
 

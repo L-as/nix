@@ -38,8 +38,6 @@ class DrvOutputSubstitutionGoal : public Goal
 
     std::string key() override;
 
-    void handleEOF(Descriptor fd) override;
-
     JobCategory jobCategory() const override
     {
         return JobCategory::Substitution;

@@ -105,6 +105,25 @@ protected:
     {};
 
     /**
+     * Wait for a child to give information back.
+     */
+    struct WaitChild
+    {};
+
+    struct ChildOutput
+    {
+        Descriptor fd;
+        std::string_view data;
+    };
+    ;
+    struct ChildEOF
+    {
+        Descriptor fd;
+    };
+
+    using WaitChildReturn = std::variant<ChildOutput, ChildEOF>;
+
+    /**
      * Return from the current coroutine and suspend our goal
      * if we're not busy anymore, or jump to the next coroutine
      * set to be executed/resumed.
@@ -220,6 +239,36 @@ protected:
 
 private:
 
+    struct SuspendAwaiter
+    {
+        handle_type handle;
+
+        bool await_ready()
+        {
+            return false;
+        }
+        void await_suspend(handle_type handle_)
+        {
+            handle = handle_;
+        }
+        void await_resume();
+    };
+
+    struct WaitChildAwaiter
+    {
+        handle_type handle;
+
+        bool await_ready()
+        {
+            return false;
+        }
+        void await_suspend(handle_type handle_)
+        {
+            handle = handle_;
+        }
+        WaitChildReturn await_resume();
+    };
+
     /**
      * Used on initial suspend, does the same as @ref std::suspend_always,
      * but asserts that everything has been set correctly.
@@ -272,6 +321,8 @@ private:
          * destructed coroutine by accident
          */
         bool alive = true;
+
+        std::optional<WaitChildReturn> waitChildReturn;
 
         /**
          * The awaiter used by @ref final_suspend.
@@ -368,7 +419,12 @@ private:
          * Allows awaiting a @ref Suspend.
          * Always suspends.
          */
-        std::suspend_always await_transform(Suspend)
+        SuspendAwaiter await_transform(Suspend)
+        {
+            return {};
+        };
+
+        WaitChildAwaiter await_transform(WaitChild)
         {
             return {};
         };
@@ -491,16 +547,8 @@ public:
     }
 
     void work();
-
-    virtual void handleChildOutput(Descriptor fd, std::string_view data)
-    {
-        abort();
-    }
-
-    virtual void handleEOF(Descriptor fd)
-    {
-        abort();
-    }
+    void handleChildOutput(Descriptor fd, std::string_view data);
+    void handleEOF(Descriptor fd);
 
     void trace(std::string_view s);
 

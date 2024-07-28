@@ -262,6 +262,21 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
     }
 
     started();
+    for (;;) {
+        WaitChildReturn r = co_await WaitChild{};
+        bool do_break = false;
+        std::visit(overloaded {
+            [this, &do_break](ChildEOF eof) {
+                handleEOF_(eof.fd);
+                do_break = true;
+            },
+            [this](ChildOutput output) {
+                handleChildOutput_(output.fd, output.data);
+            },
+        }, r);
+        if (do_break) break;
+    }
+    worker.wakeUp(shared_from_this());
     co_await Suspend{};
     // after EOF on child
     co_return buildDone();

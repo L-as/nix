@@ -728,6 +728,21 @@ Goal::Co DerivationGoal::tryToBuild()
                 actLock.reset();
                 buildResult.startTime = time(0); // inexact
                 started();
+                for (;;) {
+                    WaitChildReturn r = co_await WaitChild{};
+                    bool do_break = false;
+                    std::visit(overloaded {
+                        [this, &do_break](ChildEOF eof) {
+                            handleEOF_(eof.fd);
+                            do_break = true;
+                        },
+                        [this](ChildOutput output) {
+                            handleChildOutput_(output.fd, output.data);
+                        },
+                    }, r);
+                    if (do_break) break;
+                }
+                worker.wakeUp(shared_from_this());
                 co_await Suspend{};
                 co_return buildDone();
             case rpPostpone:
@@ -1307,7 +1322,7 @@ bool DerivationGoal::isReadDesc(Descriptor fd)
 #endif
 }
 
-void DerivationGoal::handleChildOutput(Descriptor fd, std::string_view data)
+void DerivationGoal::handleChildOutput_(Descriptor fd, std::string_view data)
 {
     // local & `ssh://`-builds are dealt with here.
     auto isWrittenToLog = isReadDesc(fd);
@@ -1378,10 +1393,9 @@ void DerivationGoal::handleChildOutput(Descriptor fd, std::string_view data)
 }
 
 
-void DerivationGoal::handleEOF(Descriptor fd)
+void DerivationGoal::handleEOF_(Descriptor fd)
 {
     if (!currentLogLine.empty()) flushLine();
-    worker.wakeUp(shared_from_this());
 }
 
 

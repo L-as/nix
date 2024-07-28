@@ -212,11 +212,6 @@ class DerivationGoal : public Goal
     virtual void cleanupPostOutputsRegisteredModeCheck();
     virtual void cleanupPostOutputsRegisteredModeNonCheck();
 
-    /**
-     * Callback used by the worker to write to the log.
-     */
-    void handleChildOutput(Descriptor fd, std::string_view data) override;
-    void handleEOF(Descriptor fd) override;
     void flushLine();
 
     /**
@@ -239,6 +234,9 @@ class DerivationGoal : public Goal
     };
 
 protected:
+
+    void handleChildOutput_(Descriptor fd, std::string_view data);
+    void handleEOF_(Descriptor fd);
 
     /**
      * The derivation stored at drvPath.
