@@ -37,8 +37,7 @@ typedef std::chrono::time_point<std::chrono::steady_clock> steady_time_point;
  */
 struct Child
 {
-    WeakGoalPtr goal;
-    Goal * goal2; // ugly hackery
+    GoalPtr goal;
     std::set<MuxablePipePollState::CommChannel> channels;
     bool respectTimeouts;
     bool inBuildSlot;
@@ -59,30 +58,38 @@ struct HookInstance;
  */
 class Worker
 {
-private:
-
-    /* Note: the worker should only have strong pointers to the
-       top-level goals. */
-
-    /**
-     * The top-level goals of the worker.
-     */
-    Goals topGoals;
 
     /**
      * Goals that are ready to do some work.
      */
-    WeakGoals awake;
+    Goals awake;
 
     /**
      * Goals waiting for a build slot.
      */
-    WeakGoals wantingToBuild;
+    Goals wantingToBuild;
+
+    /**
+     * Goals waiting for busy paths to be unlocked.
+     */
+    Goals waitingForAnyGoal;
+
+    /**
+     * Goals sleeping for a few seconds (polling a lock).
+     */
+    Goals waitingForAWhile;
+
+    /**
+     * Goals waiting for another goal.
+     */
+    Goals pausedGoals;
 
     /**
      * Child processes currently running.
      */
     std::list<Child> children;
+
+    std::multimap<GoalKey, GoalKey> goalDAG;
 
     /**
      * Number of build slots occupied.  This includes local builds but does not
@@ -94,24 +101,6 @@ private:
      * Number of substitution slots occupied.
      */
     unsigned int nrSubstitutions;
-
-    /**
-     * Maps used to prevent multiple instantiations of a goal for the
-     * same derivation / path.
-     */
-    std::map<StorePath, std::weak_ptr<DerivationGoal>> derivationGoals;
-    std::map<StorePath, std::weak_ptr<PathSubstitutionGoal>> substitutionGoals;
-    std::map<DrvOutput, std::weak_ptr<DrvOutputSubstitutionGoal>> drvOutputSubstitutionGoals;
-
-    /**
-     * Goals waiting for busy paths to be unlocked.
-     */
-    WeakGoals waitingForAnyGoal;
-
-    /**
-     * Goals sleeping for a few seconds (polling a lock).
-     */
-    WeakGoals waitingForAWhile;
 
     /**
      * Last time the goals in `waitingForAWhile` were woken up.
@@ -193,21 +182,25 @@ public:
      */
 private:
     std::shared_ptr<DerivationGoal> makeDerivationGoalCommon(
-        const StorePath & drvPath, const OutputsSpec & wantedOutputs,
+        const StorePath & drvPath,
+        const OutputsSpec & wantedOutputs,
         std::function<std::shared_ptr<DerivationGoal>()> mkDrvGoal);
 public:
-    std::shared_ptr<DerivationGoal> makeDerivationGoal(
-        const StorePath & drvPath,
-        const OutputsSpec & wantedOutputs, BuildMode buildMode = bmNormal);
+    std::shared_ptr<DerivationGoal>
+    makeDerivationGoal(const StorePath & drvPath, const OutputsSpec & wantedOutputs, BuildMode buildMode = bmNormal);
     std::shared_ptr<DerivationGoal> makeBasicDerivationGoal(
-        const StorePath & drvPath, const BasicDerivation & drv,
-        const OutputsSpec & wantedOutputs, BuildMode buildMode = bmNormal);
+        const StorePath & drvPath,
+        const BasicDerivation & drv,
+        const OutputsSpec & wantedOutputs,
+        BuildMode buildMode = bmNormal);
 
     /**
      * @ref SubstitutionGoal "substitution goal"
      */
-    std::shared_ptr<PathSubstitutionGoal> makePathSubstitutionGoal(const StorePath & storePath, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
-    std::shared_ptr<DrvOutputSubstitutionGoal> makeDrvOutputSubstitutionGoal(const DrvOutput & id, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
+    std::shared_ptr<PathSubstitutionGoal> makePathSubstitutionGoal(
+        const StorePath & storePath, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
+    std::shared_ptr<DrvOutputSubstitutionGoal> makeDrvOutputSubstitutionGoal(
+        const DrvOutput & id, RepairFlag repair = NoRepair, std::optional<ContentAddress> ca = std::nullopt);
 
     /**
      * Make a goal corresponding to the `DerivedPath`.
@@ -219,13 +212,14 @@ public:
 
     /**
      * Remove a dead goal.
+     * The goal must have been awake when this is called.
      */
-    void removeGoal(GoalPtr goal);
+    void removeGoal(const GoalKey & goalKey);
 
     /**
      * Wake up a goal (i.e., there is something for it to do).
      */
-    void wakeUp(GoalPtr goal);
+    void wakeUp(const GoalKey & key);
 
     /**
      * Return the number of local build processes currently running (but not
@@ -242,8 +236,11 @@ public:
      * Registers a running child process.  `inBuildSlot` means that
      * the process counts towards the jobs limit.
      */
-    void childStarted(GoalPtr goal, const std::set<MuxablePipePollState::CommChannel> & channels,
-        bool inBuildSlot, bool respectTimeouts);
+    void childStarted(
+        GoalPtr goal,
+        const std::set<MuxablePipePollState::CommChannel> & channels,
+        bool inBuildSlot,
+        bool respectTimeouts);
 
     /**
      * Unregisters a running child process.  `wakeSleepers` should be
@@ -317,7 +314,8 @@ public:
     void updateProgress()
     {
         actDerivations.progress(doneBuilds, expectedBuilds + doneBuilds, runningBuilds, failedBuilds);
-        actSubstitutions.progress(doneSubstitutions, expectedSubstitutions + doneSubstitutions, runningSubstitutions, failedSubstitutions);
+        actSubstitutions.progress(
+            doneSubstitutions, expectedSubstitutions + doneSubstitutions, runningSubstitutions, failedSubstitutions);
         act.setExpected(actFileTransfer, expectedDownloadSize + doneDownloadSize);
         act.setExpected(actCopyPath, expectedNarSize + doneNarSize);
     }

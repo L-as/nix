@@ -21,15 +21,17 @@ nix::Goal::Co::~Co()
     }
 }
 
-nix::Goal::WaitChildReturn nix::Goal::WaitChildAwaiter::await_resume()
+nix::Goal::GoalInput nix::Goal::WaitChildAwaiter::await_resume()
 {
-    assert(handle.promise().waitChildReturn.has_value());
-    return std::move(*handle.promise().waitChildReturn);
+    assert(handle.promise().goal);
+    assert(handle.promise().goal->goalInput.has_value());
+    return std::move(*handle.promise().goal->goalInput);
 }
 
 void nix::Goal::SuspendAwaiter::await_resume()
 {
-    assert(!handle.promise().waitChildReturn.has_value());
+    assert(handle.promise().goal);
+    assert(!handle.promise().goal->goalInput.has_value());
 }
 
 nix::Goal::Co nix::Goal::promise_type::get_return_object()
@@ -108,13 +110,6 @@ std::coroutine_handle<> nix::Goal::Co::await_suspend(handle_type caller)
     return goal->cur_co->handle;              // we execute ourselves
 }
 
-bool CompareGoalPtrs::operator()(const GoalPtr & a, const GoalPtr & b) const
-{
-    std::string s1 = a->key();
-    std::string s2 = b->key();
-    return s1 < s2;
-}
-
 BuildResult Goal::getBuildResult(const DerivedPath & req) const
 {
     BuildResult res{buildResult};
@@ -138,45 +133,28 @@ BuildResult Goal::getBuildResult(const DerivedPath & req) const
     return res;
 }
 
-void addToWeakGoals(WeakGoals & goals, GoalPtr p)
+void Goal::waiteeDone(Goal & waiter, Goal & waitee, ExitCode result)
 {
-    if (goals.find(p) != goals.end())
-        return;
-    goals.insert(p);
-}
-
-void Goal::addWaitee(GoalPtr waitee)
-{
-    waitees.insert(waitee);
-    addToWeakGoals(waitee->waiters, shared_from_this());
-}
-
-void Goal::waiteeDone(GoalPtr waitee, ExitCode result)
-{
-    assert(waitees.count(waitee));
-    waitees.erase(waitee);
-
-    trace(fmt("waitee '%s' done; %d left", waitee->name, waitees.size()));
+    --waiter.nrWaitees;
+    waiter.trace(fmt("waitee '%s' done; %d left", waitee.name, waiter.nrWaitees));
 
     if (result == ecFailed || result == ecNoSubstituters || result == ecIncompleteClosure)
-        ++nrFailed;
+        ++waiter.nrFailed;
 
     if (result == ecNoSubstituters)
-        ++nrNoSubstituters;
+        ++waiter.nrNoSubstituters;
 
     if (result == ecIncompleteClosure)
-        ++nrIncompleteClosure;
+        ++waiter.nrIncompleteClosure;
 
-    if (waitees.empty() || (result == ecFailed && !settings.keepGoing)) {
+    /* If a waitee fails, we can fail early, unless --keep-going is set. */
+    if (result == ecFailed && !settings.keepGoing) {
+        throw new Error("FIXME");
+    }
 
-        /* If we failed and keepGoing is not set, we remove all
-           remaining waitees. */
-        for (auto & goal : waitees) {
-            goal->waiters.extract(shared_from_this());
-        }
-        waitees.clear();
-
-        worker.wakeUp(shared_from_this());
+    /* If we have nothing left to wait for, we can begin working again. */
+    else if (waiter.nrWaitees == 0) {
+        waiter.worker.wakeUp(waiter.key()); /* We move the GoalPtr out. */
     }
 }
 
@@ -195,13 +173,15 @@ Goal::Done Goal::amDone(ExitCode result, std::optional<Error> ex)
             this->ex = std::move(*ex);
     }
 
-    for (auto & i : waiters) {
-        GoalPtr goal = i.lock();
-        if (goal)
-            goal->waiteeDone(shared_from_this(), result);
+    while (!waiters.empty()) {
+        auto it = waiters.begin();
+        SharedGoalPtr waiter = std::move(*it);
+        waiteeDone(std::move(waiter), *this, result);
+        waiters.erase(it);
     }
-    waiters.clear();
-    worker.removeGoal(shared_from_this());
+
+    assert(!goalOutput.has_value());
+    goalOutput = GoalDone{};
 
     cleanup();
 
@@ -231,46 +211,39 @@ void Goal::work()
 
 void Goal::handleChildOutput(Descriptor fd, std::string_view data)
 {
-    assert(cur_co);
-    assert(cur_co->handle);
-    assert(!cur_co->handle.promise().waitChildReturn.has_value());
-    cur_co->handle.promise().waitChildReturn = ChildOutput{fd, data};
+    assert(!goalInput.has_value());
+    goalInput = ChildOutput{fd, data};
     work();
+    goalInput.reset();
 }
 
 void Goal::handleEOF(Descriptor fd)
 {
-    assert(cur_co);
-    assert(cur_co->handle);
-    assert(!cur_co->handle.promise().waitChildReturn.has_value());
-    cur_co->handle.promise().waitChildReturn = ChildEOF{fd};
+    assert(!goalInput.has_value());
+    goalInput = ChildEOF{fd};
     work();
+    goalInput.reset();
 }
 
 Goal::Co Goal::nap()
 {
-    worker.wakeUp(shared_from_this());
+    assert(!goalOutput.has_value());
     co_await Suspend{};
-    co_return Return{};
-}
-
-Goal::Co Goal::waitForWaitees()
-{
-    if (!waitees.empty())
-        co_await Suspend{};
     co_return Return{};
 }
 
 Goal::Co Goal::waitForBuildSlot()
 {
-    worker.waitForBuildSlot(shared_from_this());
+    assert(!goalOutput.has_value());
+    goalOutput = WaitForBuildSlot{};
     co_await Suspend{};
     co_return Return{};
 }
 
 Goal::Co Goal::waitForAWhile()
 {
-    worker.waitForAWhile(shared_from_this());
+    assert(!goalOutput.has_value());
+    goalOutput = WaitForAWhile{};
     co_await Suspend{};
     co_return Return{};
 }

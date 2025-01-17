@@ -4,6 +4,7 @@
 #include "substitution-goal.hh"
 #include "drv-output-substitution-goal.hh"
 #include "derivation-goal.hh"
+#include <memory>
 #ifndef _WIN32 // TODO Enable building on Windows
 #  include "local-derivation-goal.hh"
 #  include "hook-instance.hh"
@@ -11,6 +12,16 @@
 #include "signals.hh"
 
 namespace nix {
+
+namespace {
+    GoalPtr extractGoal(Goals goals, const GoalKey & key) {
+        // FIXME: C++23 standard library supports passing key to extract
+        // directly rather than going through this indirection.
+        auto goal_it = goals.find(key);
+        assert(goal_it != goals.end()); /* goal should be in awake */
+        return std::move(goals.extract(goal_it).value());
+    }
+}
 
 Worker::Worker(Store & store, Store & evalStore)
     : act(*logger, actRealise)
@@ -31,11 +42,15 @@ Worker::Worker(Store & store, Store & evalStore)
 
 Worker::~Worker()
 {
-    /* Explicitly get rid of all strong pointers now.  After this all
+    /* FIXME(L-as): remove, shouldn't be necessary.
+       Explicitly get rid of all strong pointers now.  After this all
        goals that refer to this worker should be gone.  (Otherwise we
        are in trouble, since goals may call childTerminated() etc. in
        their destructors). */
-    topGoals.clear();
+    awake.clear();
+    waitingForAWhile.clear();
+    waitingForAnyGoal.clear();
+    wantingToBuild.clear();
 
     assert(expectedSubstitutions == 0);
     assert(expectedDownloadSize == 0);
@@ -43,50 +58,20 @@ Worker::~Worker()
 }
 
 
-std::shared_ptr<DerivationGoal> Worker::makeDerivationGoalCommon(
+std::unique_ptr<DerivationGoal> Worker::makeDerivationGoal(
     const StorePath & drvPath,
     const OutputsSpec & wantedOutputs,
-    std::function<std::shared_ptr<DerivationGoal>()> mkDrvGoal)
+    BuildMode buildMode)
 {
-    std::weak_ptr<DerivationGoal> & goal_weak = derivationGoals[drvPath];
-    std::shared_ptr<DerivationGoal> goal = goal_weak.lock();
-    if (!goal) {
-        goal = mkDrvGoal();
-        goal_weak = goal;
-        wakeUp(goal);
-    } else {
-        goal->addWantedOutputs(wantedOutputs);
-    }
+    auto goal = std::make_unique<DerivationGoal>(drvPath, wantedOutputs, *this, buildMode);
     return goal;
 }
 
-
-std::shared_ptr<DerivationGoal> Worker::makeDerivationGoal(const StorePath & drvPath,
-    const OutputsSpec & wantedOutputs, BuildMode buildMode)
-{
-    return makeDerivationGoalCommon(drvPath, wantedOutputs, [&]() -> std::shared_ptr<DerivationGoal> {
-        return
-#ifndef _WIN32 // TODO Enable building on Windows
-            dynamic_cast<LocalStore *>(&store)
-            ? std::make_shared<LocalDerivationGoal>(drvPath, wantedOutputs, *this, buildMode)
-            :
-#endif
-            std::make_shared</* */DerivationGoal>(drvPath, wantedOutputs, *this, buildMode);
-    });
-}
-
-std::shared_ptr<DerivationGoal> Worker::makeBasicDerivationGoal(const StorePath & drvPath,
+std::unique_ptr<DerivationGoal> Worker::makeBasicDerivationGoal(const StorePath & drvPath,
     const BasicDerivation & drv, const OutputsSpec & wantedOutputs, BuildMode buildMode)
 {
-    return makeDerivationGoalCommon(drvPath, wantedOutputs, [&]() -> std::shared_ptr<DerivationGoal> {
-        return
-#ifndef _WIN32 // TODO Enable building on Windows
-            dynamic_cast<LocalStore *>(&store)
-            ? std::make_shared<LocalDerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode)
-            :
-#endif
-            std::make_shared</* */DerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode);
-    });
+    auto goal = std::make_unique<DerivationGoal>(drvPath, drv, wantedOutputs, *this, buildMode);
+    return goal;
 }
 
 
@@ -130,57 +115,29 @@ GoalPtr Worker::makeGoal(const DerivedPath & req, BuildMode buildMode)
         },
     }, req.raw());
 }
+)
 
-
-template<typename K, typename G>
-static void removeGoal(std::shared_ptr<G> goal, std::map<K, std::weak_ptr<G>> & goalMap)
+void Worker::removeGoal(GoalKey goalKey)
 {
-    /* !!! inefficient */
-    for (auto i = goalMap.begin();
-         i != goalMap.end(); )
-        if (i->second.lock() == goal) {
-            auto j = i; ++j;
-            goalMap.erase(i);
-            i = j;
-        }
-        else ++i;
+    GoalPtr goal = extractGoal(awake, goalKey);
+
+    // FIXME: remove references to key from memoisation maps for constructing goals.
+
+    if (goal->getExitCode() == Goal::ecFailed && !settings.keepGoing)
+        throw new Error("FIXME");
+
+    /* All goals that were waiting for some goal to end are now awake. */
+    awake.merge(waitingForAnyGoal);
+    assert(waitingForAnyGoal.empty());
 }
 
 
-void Worker::removeGoal(GoalPtr goal)
+void Worker::wakeUp(const GoalKey & key)
 {
-    if (auto drvGoal = std::dynamic_pointer_cast<DerivationGoal>(goal))
-        nix::removeGoal(drvGoal, derivationGoals);
-    else
-    if (auto subGoal = std::dynamic_pointer_cast<PathSubstitutionGoal>(goal))
-        nix::removeGoal(subGoal, substitutionGoals);
-    else if (auto subGoal = std::dynamic_pointer_cast<DrvOutputSubstitutionGoal>(goal))
-        nix::removeGoal(subGoal, drvOutputSubstitutionGoals);
-    else
-        assert(false);
-
-    if (topGoals.find(goal) != topGoals.end()) {
-        topGoals.erase(goal);
-        /* If a top-level goal failed, then kill all other goals
-           (unless keepGoing was set). */
-        if (goal->getExitCode() == Goal::ecFailed && !settings.keepGoing)
-            topGoals.clear();
-    }
-
-    /* Wake up goals waiting for any goal to finish. */
-    for (auto & i : waitingForAnyGoal) {
-        GoalPtr goal = i.lock();
-        if (goal) wakeUp(goal);
-    }
-
-    waitingForAnyGoal.clear();
-}
-
-
-void Worker::wakeUp(GoalPtr goal)
-{
-    goal->trace("woken up");
-    addToWeakGoals(awake, goal);
+    GoalPtr goal = extractGoal(pausedGoals, key);
+    Goal* goal_ = goal.get();
+    awake.insert(std::move(goal));
+    goal_->trace("woken up");
 }
 
 
@@ -200,8 +157,7 @@ void Worker::childStarted(GoalPtr goal, const std::set<MuxablePipePollState::Com
     bool inBuildSlot, bool respectTimeouts)
 {
     Child child;
-    child.goal = goal;
-    child.goal2 = goal.get();
+    child.goal_key = goal->key();
     child.channels = channels;
     child.timeStarted = child.lastOutput = steady_time_point::clock::now();
     child.inBuildSlot = inBuildSlot;
@@ -257,35 +213,9 @@ void Worker::childTerminated(Goal * goal, bool wakeSleepers)
     }
 }
 
-
-void Worker::waitForBuildSlot(GoalPtr goal)
+void Worker::run()
 {
-    goal->trace("wait for build slot");
-    bool isSubstitutionGoal = goal->jobCategory() == JobCategory::Substitution;
-    if ((!isSubstitutionGoal && getNrLocalBuilds() < settings.maxBuildJobs) ||
-        (isSubstitutionGoal && getNrSubstitutions() < settings.maxSubstitutionJobs))
-        wakeUp(goal); /* we can do it right away */
-    else
-        addToWeakGoals(wantingToBuild, goal);
-}
-
-
-void Worker::waitForAnyGoal(GoalPtr goal)
-{
-    debug("wait for any goal");
-    addToWeakGoals(waitingForAnyGoal, goal);
-}
-
-
-void Worker::waitForAWhile(GoalPtr goal)
-{
-    debug("wait for a while");
-    addToWeakGoals(waitingForAWhile, goal);
-}
-
-
-void Worker::run(const Goals & _topGoals)
-{
+#if FALSE
     std::vector<nix::DerivedPath> topPaths;
 
     for (auto & i : _topGoals) {
@@ -305,6 +235,7 @@ void Worker::run(const Goals & _topGoals)
     StorePathSet willBuild, willSubstitute, unknown;
     uint64_t downloadSize, narSize;
     store.queryMissing(topPaths, willBuild, willSubstitute, unknown, downloadSize, narSize);
+#endif
 
     debug("entered goal loop");
 
@@ -312,32 +243,66 @@ void Worker::run(const Goals & _topGoals)
 
         checkInterrupt();
 
-        // TODO GC interface?
+        // FIXME: add autoGC to Store API
         if (auto localStore = dynamic_cast<LocalStore *>(&store))
             localStore->autoGC(false);
 
-        /* Call every wake goal (in the ordering established by
-           CompareGoalPtrs). */
-        while (!awake.empty() && !topGoals.empty()) {
-            Goals awake2;
-            for (auto & i : awake) {
-                GoalPtr goal = i.lock();
-                if (goal) awake2.insert(goal);
-            }
-            awake.clear();
-            for (auto & goal : awake2) {
-                checkInterrupt();
-                goal->work();
-                if (topGoals.empty()) break; // stuff may have been cancelled
-            }
+        for (auto it = awake.begin(); it != awake.end(); it++) {
+            assert(*it);
+            Goal::GoalOutput r = (*it)->work();
+            std::visit(overloaded {
+                [&](Goal::Nap && _) {},
+                [&](Goal::WaitForAWhile && _) {
+                    GoalPtr g = std::move(awake.extract(it).value());
+                    waitingForAWhile.insert(std::move(g));
+                },
+                [&](Goal::WaitForBuildSlot && _) {
+                    GoalPtr g = std::move(awake.extract(it).value());
+                    wantingToBuild.insert(std::move(g));
+                },
+                [&](Goal::WaitWaitees && w) {
+                    for (auto&& waitee : std::move(w.waitees)) {
+                        auto key = waitee->key();
+                        if (goalDAG.contains(key)) {
+                            /* Don't insert the goal, one equivalent to it already exists. */
+                        } else {
+                            awake.insert(std::move(waitee));
+                        }
+                        goalDAG.insert({key, (*it)->key()});
+                    }
+                },
+                [&](Goal::GoalDone && _) {
+                    GoalPtr waitee = std::move(awake.extract(it).value());
+                    auto waiters = goalDAG.equal_range(waitee->key());
+                    for (auto it = waiters.first ; it != waiters.second ; it++) {
+                        auto waiter_it = pausedGoals.find(it->second);
+                        assert(waiter_it != pausedGoals.end());
+                        (*waiter_it)->nrWaitees -= 1;
+                        if ((*waiter_it)->nrWaitees == 0) {
+                            GoalPtr waiter = std::move(pausedGoals.extract(waiter_it).value());
+                            awake.insert(std::move(waiter));
+                        }
+                        /* We remove the link between waitee and waiter, now that
+                         * waitee is gone. */
+                        goalDAG.extract(it);
+                    }
+                },
+            }, std::move(r));
         }
 
-        if (topGoals.empty()) break;
+        if (goalDAG.empty()) {
+            /* We are done! */
+            break;
+        }
+
+        /* There must still be work left to do. */
+        assert(!waitingForAWhile.empty() || !awake.empty() || !children.empty());
 
         /* Wait for input. */
         if (!children.empty() || !waitingForAWhile.empty())
             waitForInput();
         else if (awake.empty() && 0U == settings.maxBuildJobs) {
+            /* FIXME: This logic shouldn't be here. */
             if (getMachines().empty())
                throw Error(
                     R"(
@@ -402,8 +367,9 @@ void Worker::waitForInput()
     }
 
     /* If we are polling goals that are waiting for a lock, then wake
-       up after a few seconds at most. */
-    if (!waitingForAWhile.empty()) {
+       up after a few seconds at most.
+       If there is still more work to do, we also set a timeout. */
+    if (!waitingForAWhile.empty() || !awake.empty()) {
         useTimeout = true;
         if (lastWokenUp == steady_time_point::min() || lastWokenUp > before) lastWokenUp = before;
         timeout = std::max(1L,

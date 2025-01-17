@@ -18,24 +18,44 @@ class DerivationGoal;
 /**
  * A pointer to a goal.
  */
-typedef std::shared_ptr<Goal> GoalPtr;
-typedef std::weak_ptr<Goal> WeakGoalPtr;
+typedef std::unique_ptr<Goal> GoalPtr;
+
+/**
+ * The key used to index a set over goals.
+ */
+typedef std::string GoalKey;
+
+/**
+ * Internal function used to inline comparison of @ref GoalPtr when
+ * using @ref std::set.
+ */
+static inline GoalKey _get_goal_key(const GoalPtr & goal);
 
 struct CompareGoalPtrs
 {
-    bool operator()(const GoalPtr & a, const GoalPtr & b) const;
+    using is_transparent = void;
+    bool operator()(const GoalKey & k1, const GoalPtr & b) const
+    {
+        GoalKey k2 = _get_goal_key(b);
+        return k1 < k2;
+    }
+    bool operator()(const GoalPtr & a, const GoalKey & k2) const
+    {
+        GoalKey k1 = _get_goal_key(a);
+        return k1 < k2;
+    }
+    bool operator()(const GoalPtr & a, const GoalPtr & b) const
+    {
+        GoalKey k1 = _get_goal_key(a);
+        GoalKey k2 = _get_goal_key(b);
+        return k1 < k2;
+    }
 };
 
 /**
  * Set of goals.
  */
 typedef std::set<GoalPtr, CompareGoalPtrs> Goals;
-typedef std::set<WeakGoalPtr, std::owner_less<WeakGoalPtr>> WeakGoals;
-
-/**
- * A map of paths to goals (and the other way around).
- */
-typedef std::map<StorePath, WeakGoalPtr> WeakGoalMap;
 
 /**
  * Used as a hint to the worker on how to schedule a particular goal. For example,
@@ -54,16 +74,8 @@ enum struct JobCategory {
     Substitution,
 };
 
-class Goal : public std::enable_shared_from_this<Goal>
+class Goal
 {
-    friend struct CompareGoalPtrs;
-
-    /**
-     * Goals waiting for this one to finish.  Must use weak pointers
-     * here to prevent cycles.
-     */
-    WeakGoals waiters;
-
     /**
      * Number of goals we are/were waiting for that have failed.
      */
@@ -121,7 +133,7 @@ protected:
         Descriptor fd;
     };
 
-    using WaitChildReturn = std::variant<ChildOutput, ChildEOF>;
+    using GoalInput = std::variant<ChildOutput, ChildEOF>;
 
     /**
      * Return from the current coroutine and suspend our goal
@@ -143,7 +155,29 @@ protected:
         friend Goal;
     };
 
+public:
+
+    struct WaitForAWhile {};
+    struct WaitForBuildSlot {};
+    struct WaitWaitees {
+        std::vector<GoalPtr> waitees;
+    };
+    struct GoalDone {};
+    struct Nap {};
+
+    using GoalOutput = std::variant<WaitForAWhile, WaitForBuildSlot, WaitWaitees, GoalDone, Nap>;
+
 private:
+
+    /**
+     * Worker passes information into goal using this.
+     */
+    std::optional<GoalInput> goalInput;
+
+    /**
+     * Goal passes information to worker using this.
+     */
+    std::optional<GoalOutput> goalOutput;
 
     // forward declaration of promise_type, see below
     struct promise_type;
@@ -266,7 +300,7 @@ private:
         {
             handle = handle_;
         }
-        WaitChildReturn await_resume();
+        GoalInput await_resume();
     };
 
     /**
@@ -321,8 +355,6 @@ private:
          * destructed coroutine by accident
          */
         bool alive = true;
-
-        std::optional<WaitChildReturn> waitChildReturn;
 
         /**
          * The awaiter used by @ref final_suspend.
@@ -457,19 +489,12 @@ private:
      */
     std::optional<Error> ex;
 
-    virtual std::string key() = 0;
-
 protected:
 
     /**
      * Backlink to the worker.
      */
     Worker & worker;
-
-    /**
-     * Goals that this goal is waiting for.
-     */
-    Goals waitees;
 
     /**
      * Build result.
@@ -503,9 +528,7 @@ protected:
      */
     Done amDone(ExitCode result, std::optional<Error> ex = {});
 
-    void addWaitee(GoalPtr waitee);
-
-    virtual void waiteeDone(GoalPtr waitee, ExitCode result);
+    static void waiteeDone(Goal & waiter, Goal & waitee, ExitCode result);
 
     /**
      * Take a "power nap".
@@ -516,7 +539,7 @@ protected:
     /**
      * Wait for all subgoals to end if there are any.
      */
-    Co waitForWaitees();
+    Co waitForWaitees(std::vector<GoalPtr> && waitees);
 
     /**
      * Wait for a build slot to become available.
@@ -529,6 +552,17 @@ protected:
     Co waitForAWhile();
 
 public:
+
+    /**
+     * Number of goals this goal is waiting for to finish before
+     * resuming execution.
+     */
+    size_t nrWaitees;
+
+    /**
+     * The key used to index sets.
+     */
+    virtual GoalKey key() = 0;
 
     ExitCode getExitCode() const
     {
@@ -567,7 +601,7 @@ public:
         trace("goal destroyed");
     }
 
-    void work();
+    GoalOutput work();
     void handleChildOutput(Descriptor fd, std::string_view data);
     void handleEOF(Descriptor fd);
 
@@ -599,7 +633,10 @@ public:
     using _internal_promise_type = promise_type;
 };
 
-void addToWeakGoals(WeakGoals & goals, GoalPtr p);
+static inline GoalKey _get_goal_key(const GoalPtr & a)
+{
+    return a->key();
+}
 
 }
 

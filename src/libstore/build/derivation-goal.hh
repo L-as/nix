@@ -223,8 +223,6 @@ class DerivationGoal : public Goal
 
     Co repairClosure();
 
-    void waiteeDone(GoalPtr waitee, ExitCode result) override;
-
     StorePathSet exportReferences(const StorePathSet & storePaths);
 
     JobCategory jobCategory() const override
