@@ -55,6 +55,13 @@ struct InitialOutput {
     std::optional<InitialOutputStatus> known;
 };
 
+/** Used internally */
+void runPostBuildHook(
+    Store & store,
+    Logger & logger,
+    const StorePath & drvPath,
+    const StorePathSet & outputPaths);
+
 /**
  * A goal for building some or all of the outputs of a derivation.
  */
@@ -239,7 +246,7 @@ struct DerivationGoal : public Goal
     Co gaveUpOnSubstitution();
     Co tryToBuild();
     virtual Co tryLocalBuild();
-    Co buildDone();
+    Co hookDone();
 
     Co resolvedFinished();
 
