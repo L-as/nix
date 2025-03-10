@@ -2902,18 +2902,13 @@ SingleDrvOutputs LocalDerivationGoal::registerOutputs()
         if (experimentalFeatureSettings.isEnabled(Xp::CaDerivations)
             && !drv->type().isImpure())
         {
-            signRealisation(thisRealisation);
+            worker.store.signRealisation(thisRealisation);
             worker.store.registerDrvOutput(thisRealisation);
         }
         builtOutputs.emplace(outputName, thisRealisation);
     }
 
     return builtOutputs;
-}
-
-void LocalDerivationGoal::signRealisation(Realisation & realisation)
-{
-    getLocalStore().signRealisation(realisation);
 }
 
 
