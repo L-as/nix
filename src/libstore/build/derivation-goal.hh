@@ -256,12 +256,6 @@ struct DerivationGoal : public Goal
     HookReply tryBuildHook();
 
     /**
-     * Check that the derivation outputs all exist and register them
-     * as valid.
-     */
-    virtual SingleDrvOutputs registerOutputs();
-
-    /**
      * Open a log file and a pipe to it.
      */
     Path openLogFile();
