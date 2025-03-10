@@ -1061,9 +1061,6 @@ void LocalDerivationGoal::startBuilder()
            us.
         */
 
-        if (derivationType->isSandboxed())
-            privateNetwork = true;
-
         userNamespaceSync.create();
 
         usingUserNamespace = userNamespacesSupported();
@@ -1091,7 +1088,7 @@ void LocalDerivationGoal::startBuilder()
 
                 ProcessOptions options;
                 options.cloneFlags = CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_PARENT | SIGCHLD;
-                if (privateNetwork)
+                if (derivationType->isSandboxed())
                     options.cloneFlags |= CLONE_NEWNET;
                 if (usingUserNamespace)
                     options.cloneFlags |= CLONE_NEWUSER;
@@ -1908,7 +1905,7 @@ void LocalDerivationGoal::runChild()
 
             userNamespaceSync.readSide = -1;
 
-            if (privateNetwork) {
+            if (derivationType->isSandboxed()) {
 
                 /* Initialise the loopback interface. */
                 AutoCloseFD fd(socket(PF_INET, SOCK_DGRAM, IPPROTO_IP));
