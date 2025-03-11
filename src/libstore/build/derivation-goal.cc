@@ -142,8 +142,7 @@ Goal::Co DerivationGoal::init() {
            substitute. */
 
         if (buildMode != bmNormal || !worker.evalStore.isValidPath(drvPath)) {
-            addWaitee(upcast_goal(worker.makePathSubstitutionGoal(drvPath)));
-            co_await Suspend{};
+            co_await await({upcast_goal(worker.makePathSubstitutionGoal(drvPath))});
         }
 
         trace("loading derivation");
@@ -235,6 +234,8 @@ Goal::Co DerivationGoal::haveDerivation()
         }
     }
 
+    Goals waitees;
+
     /* We are first going to try to create the invalid output paths
        through substitutes.  If that doesn't work, we'll build
        them. */
@@ -242,7 +243,7 @@ Goal::Co DerivationGoal::haveDerivation()
         for (auto & [outputName, status] : initialOutputs) {
             if (!status.wanted) continue;
             if (!status.known)
-                addWaitee(
+                waitees.insert(
                     upcast_goal(
                         worker.makeDrvOutputSubstitutionGoal(
                             DrvOutput{status.outputHash, outputName},
@@ -252,14 +253,14 @@ Goal::Co DerivationGoal::haveDerivation()
                 );
             else {
                 auto * cap = getDerivationCA(*drv);
-                addWaitee(upcast_goal(worker.makePathSubstitutionGoal(
+                waitees.insert(upcast_goal(worker.makePathSubstitutionGoal(
                     status.known->path,
                     buildMode == bmRepair ? Repair : NoRepair,
                     cap ? std::optional { *cap } : std::nullopt)));
             }
         }
 
-    if (!waitees.empty()) co_await Suspend{}; /* to prevent hang (no wake-up event) */
+    co_await await(std::move(waitees));
 
     trace("all outputs substituted (maybe)");
 
@@ -342,6 +343,8 @@ Goal::Co DerivationGoal::gaveUpOnSubstitution()
        is no need to restart. */
     needRestart = NeedRestartForMoreOutputs::BuildInProgressWillNotNeed;
 
+    Goals waitees;
+
     std::map<ref<const SingleDerivedPath>, GoalPtr, value_comparison> inputGoals;
 
     if (useDerivation) {
@@ -356,7 +359,7 @@ Goal::Co DerivationGoal::gaveUpOnSubstitution()
                     },
                     buildMode == bmRepair ? bmRepair : bmNormal);
                 inputGoals.insert_or_assign(inputDrv, g);
-                addWaitee(std::move(g));
+                waitees.insert(std::move(g));
             }
             for (const auto & [outputName, childNode] : inputNode.childMap)
                 addWaiteeDerivedPath(
@@ -397,10 +400,11 @@ Goal::Co DerivationGoal::gaveUpOnSubstitution()
         if (!settings.useSubstitutes)
             throw Error("dependency '%s' of '%s' does not exist, and substitution is disabled",
                 worker.store.printStorePath(i), worker.store.printStorePath(drvPath));
-        addWaitee(upcast_goal(worker.makePathSubstitutionGoal(i)));
+        waitees.insert(upcast_goal(worker.makePathSubstitutionGoal(i)));
     }
 
-    if (!waitees.empty()) co_await Suspend{}; /* to prevent hang (no wake-up event) */
+    co_await await(std::move(waitees));
+
 
     trace("all inputs realised");
 
@@ -495,7 +499,7 @@ Goal::Co DerivationGoal::gaveUpOnSubstitution()
 
             resolvedDrvGoal = worker.makeDerivationGoal(
                 pathResolved, wantedOutputs, buildMode);
-            addWaitee(resolvedDrvGoal);
+            waitees.insert(resolvedDrvGoal);
 
             co_await Suspend{};
             co_return resolvedFinished();
@@ -720,6 +724,8 @@ Goal::Co DerivationGoal::repairClosure()
                     outputsToDrv.insert_or_assign(*j.second, i);
         }
 
+    Goals waitees;
+
     /* Check each path (slow!). */
     for (auto & i : outputClosure) {
         if (worker.pathContentsGood(i)) continue;
@@ -728,9 +734,9 @@ Goal::Co DerivationGoal::repairClosure()
             worker.store.printStorePath(i), worker.store.printStorePath(drvPath));
         auto drvPath2 = outputsToDrv.find(i);
         if (drvPath2 == outputsToDrv.end())
-            addWaitee(upcast_goal(worker.makePathSubstitutionGoal(i, Repair)));
+            waitees.insert(upcast_goal(worker.makePathSubstitutionGoal(i, Repair)));
         else
-            addWaitee(worker.makeGoal(
+            waitees.insert(worker.makeGoal(
                 DerivedPath::Built {
                     .drvPath = makeConstantStorePathRef(drvPath2->second),
                     .outputs = OutputsSpec::All { },
@@ -738,17 +744,15 @@ Goal::Co DerivationGoal::repairClosure()
                 bmRepair));
     }
 
-    if (waitees.empty()) {
-        co_return done(BuildResult::AlreadyValid, assertPathValidity());
-    } else {
-        co_await Suspend{};
+    co_await await(std::move(waitees));
 
+    if (!waitees.empty()) {
         trace("closure repaired");
         if (nrFailed > 0)
             throw Error("some paths in the output closure of derivation '%s' could not be repaired",
                 worker.store.printStorePath(drvPath));
-        co_return done(BuildResult::AlreadyValid, assertPathValidity());
     }
+    co_return done(BuildResult::AlreadyValid, assertPathValidity());
 }
 
 
