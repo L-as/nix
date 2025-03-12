@@ -276,7 +276,6 @@ Goal::Co LocalDerivationGoal::tryLocalBuild()
        simply have closed its end of the pipe, so just to be sure,
        kill it. */
     int status = hook ? hook->pid.kill() : pid.kill();
-;
 
     debug("builder process for '%s' finished", worker.store.printStorePath(drvPath));
 
