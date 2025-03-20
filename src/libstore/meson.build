@@ -185,9 +185,12 @@ ghc = find_program('ghc')
 
 dummy_hs_file = files('Dummy.hs')
 
-# FIXME: This setup prevents proper cross-module inlining.
+# TODO: This setup prevents proper cross-module inlining.
 # It also calls ghc when not needed, but ghc itself also has a
 # recompilation check, which makes it not so bad.
+#
+# Albeit for releases, where we care about inlining more,
+# we can do naive approaches to achieve this with bad effiency.
 
 hs_boots = ['build/Goal.hs-boot']
 
