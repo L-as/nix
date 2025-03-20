@@ -230,6 +230,7 @@ sources = files(
   'globals.cc',
   'http-binary-cache-store.cc',
   'indirect-root-store.cc',
+  'init-haskell.cc',
   'keys.cc',
   'legacy-ssh-store.cc',
   'local-binary-cache-store.cc',
