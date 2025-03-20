@@ -185,13 +185,36 @@ ghc = find_program('ghc')
 
 dummy_hs_file = files('Dummy.hs')
 
-worker_hs = custom_target('worker_hs',
-  input : 'build/worker.hs',
-  output : 'worker_hs.o',
-  command : [ghc, '-fPIC', '-dynamic', '-c', '@INPUT@', '-o', '@OUTPUT@']
+# FIXME: This setup prevents cross-module inlining.
+# It also recompiles too often.
+# Doing it correctly in Meson seems to be a huge pain though.
+
+hs_boots = ['build/Goal.hs-boot']
+
+hs_intfs = []
+
+foreach f : hs_boots
+  c = f.split('/')
+  c = c[-1].split('.')
+  c = c[0] + '.hi'
+  hs_intfs += custom_target(c,
+    output : c,
+    input : f,
+    command : [ghc, '-dynamic', '-c', '@INPUT@', '-o', '/dev/null', '-ohi', '@OUTPUT@'],
+  )
+endforeach
+
+generate_hs = generator(
+  ghc,
+  arguments : ['-i@BUILD_DIR@/..', '-fPIC', '-v', '-dynamic', '-c', '@INPUT@', '-o', '@OUTPUT@'],
+  output : '@PLAINNAME@.o',
+  depends : hs_intfs
 )
 
-hs_sources = worker_hs.to_list()
+hs_sources = generate_hs.process(
+  'build/Goal.hs',
+  'build/Worker.hs',
+)
 
 ghc_rts = declare_dependency(
   link_args: [
