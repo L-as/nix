@@ -10,6 +10,8 @@ namespace nix {
 
 void Store::buildPaths(const std::vector<DerivedPath> & reqs, BuildMode buildMode, std::shared_ptr<Store> evalStore)
 {
+    auto s = nix_libstore_init_worker_state();
+
     Worker worker(*this, evalStore ? *evalStore : *this);
 
     Goals goals;

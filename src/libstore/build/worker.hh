@@ -12,6 +12,10 @@
 
 namespace nix {
 
+struct HsWorkerState;
+
+extern "C" HsWorkerState* nix_libstore_init_worker_state(void);
+
 /* Forward definition. */
 struct DerivationGoal;
 struct PathSubstitutionGoal;

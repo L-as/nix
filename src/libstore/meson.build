@@ -181,6 +181,27 @@ add_project_arguments(
 
 subdir('nix-meson-build-support/common')
 
+ghc = find_program('ghc')
+
+dummy_hs_file = files('Dummy.hs')
+
+worker_hs = custom_target('worker_hs',
+  input : 'build/worker.hs',
+  output : 'worker_hs.o',
+  command : [ghc, '-fPIC', '-dynamic', '-c', '@INPUT@', '-o', '@OUTPUT@']
+)
+
+hs_sources = worker_hs.to_list()
+
+ghc_rts = declare_dependency(
+  link_args: [
+    '-L/nix/store/97cajcan6faqj0kr9zhl0jin38vzcnhi-ghc-9.6.6/lib/ghc-9.6.6/lib/x86_64-linux-ghc-9.6.6/',
+    '-lHSrts-1.0.2_thr-ghc9.6.6',
+    '-lHSbase-4.18.2.1-ghc9.6.6',
+    '-lHSghc-prim-0.10.0-ghc9.6.6',
+  ],
+)
+
 sources = files(
   'binary-cache-store.cc',
   'build-result.cc',
@@ -426,8 +447,8 @@ subdir('nix-meson-build-support/windows-version')
 this_library = library(
   'nixstore',
   generated_headers,
-  sources,
-  dependencies : deps_public + deps_private + deps_other,
+  sources + hs_sources,
+  dependencies : deps_public + deps_private + deps_other + ghc_rts,
   include_directories : include_dirs,
   cpp_args : cpp_args,
   link_args: linker_export_flags,
