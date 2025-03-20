@@ -185,36 +185,53 @@ ghc = find_program('ghc')
 
 dummy_hs_file = files('Dummy.hs')
 
-# FIXME: This setup prevents cross-module inlining.
-# It also recompiles too often.
-# Doing it correctly in Meson seems to be a huge pain though.
+# FIXME: This setup prevents proper cross-module inlining.
+# It also calls ghc when not needed, but ghc itself also has a
+# recompilation check, which makes it not so bad.
 
 hs_boots = ['build/Goal.hs-boot']
 
 hs_intfs = []
 
+cp = find_program('cp')
+
 foreach f : hs_boots
   c = f.split('/')
   c = c[-1].split('.')
   c = c[0] + '.hi'
-  hs_intfs += custom_target(c,
+  t = custom_target(c,
     output : c,
     input : f,
     command : [ghc, '-dynamic', '-c', '@INPUT@', '-o', '/dev/null', '-ohi', '@OUTPUT@'],
   )
+  hs_intfs += t
+  u = custom_target(c + '-boot',
+    output : c + '-boot',
+    input : t.to_list()[0],
+    command : [cp, '@INPUT@', '@OUTPUT@'],
+  )
+  hs_intfs += u
 endforeach
 
-generate_hs = generator(
-  ghc,
-  arguments : ['-i@BUILD_DIR@/..', '-fPIC', '-v', '-dynamic', '-c', '@INPUT@', '-o', '@OUTPUT@'],
-  output : '@PLAINNAME@.o',
-  depends : hs_intfs
-)
-
-hs_sources = generate_hs.process(
+hs_sources = [
   'build/Goal.hs',
   'build/Worker.hs',
-)
+]
+
+hs_objects = []
+
+foreach f : hs_sources
+  c = f.split('/')
+  c = c[-1].split('.')
+  c = c[0]
+  t = custom_target(c + '.o',
+    output : c + '.o',
+    input : f,
+    command : [ghc, '-i@OUTDIR@', '-fPIC', '-dynamic', '-c', '@INPUT@', '-o', '@OUTPUT@', '-ohi', '@OUTDIR@/' + c + '.hi'],
+    depends : hs_intfs,
+  )
+  hs_objects += t
+endforeach
 
 ghc_rts = declare_dependency(
   link_args: [
@@ -471,7 +488,7 @@ subdir('nix-meson-build-support/windows-version')
 this_library = library(
   'nixstore',
   generated_headers,
-  sources + hs_sources,
+  sources + hs_objects,
   dependencies : deps_public + deps_private + deps_other + ghc_rts,
   include_directories : include_dirs,
   cpp_args : cpp_args,
