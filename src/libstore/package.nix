@@ -14,6 +14,8 @@
   nlohmann_json,
   sqlite,
 
+  ghc,
+
   busybox-sandbox-shell ? null,
 
   # Configuration Options
@@ -53,7 +55,7 @@ mkMesonLibrary (finalAttrs: {
     (fileset.fileFilter (file: file.hasExt "sql") ./.)
   ];
 
-  nativeBuildInputs = lib.optional embeddedSandboxShell unixtools.hexdump;
+  nativeBuildInputs = lib.optional embeddedSandboxShell unixtools.hexdump ++ [ ghc ];
 
   buildInputs =
     [

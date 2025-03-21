@@ -238,7 +238,7 @@ endforeach
 
 ghc_rts = declare_dependency(
   link_args: [
-    '-L/nix/store/97cajcan6faqj0kr9zhl0jin38vzcnhi-ghc-9.6.6/lib/ghc-9.6.6/lib/x86_64-linux-ghc-9.6.6/',
+    '-L' + ghc.full_path().substring(0, -3) + '../lib/ghc-9.6.6/lib/x86_64-linux-ghc-9.6.6/',
     '-lHSrts-1.0.2_thr-ghc9.6.6',
     '-lHSbase-4.18.2.1-ghc9.6.6',
     '-lHSghc-prim-0.10.0-ghc9.6.6',
