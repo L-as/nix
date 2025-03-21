@@ -236,6 +236,8 @@ foreach f : hs_sources
   hs_objects += t
 endforeach
 
+# FIXME: we pull in all of GHC when depending on the RTS
+
 ghc_rts = declare_dependency(
   link_args: [
     '-L' + ghc.full_path().substring(0, -3) + '../lib/ghc-9.6.6/lib/x86_64-linux-ghc-9.6.6/',
