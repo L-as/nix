@@ -2,6 +2,7 @@
   lib,
   stdenv,
   mkMesonLibrary,
+  buildPackages,
 
   unixtools,
   darwin,
@@ -55,7 +56,7 @@ mkMesonLibrary (finalAttrs: {
     (fileset.fileFilter (file: file.hasExt "sql") ./.)
   ];
 
-  nativeBuildInputs = lib.optional embeddedSandboxShell unixtools.hexdump ++ [ ghc ];
+  nativeBuildInputs = lib.optional embeddedSandboxShell unixtools.hexdump ++ [ buildPackages.ghc ];
 
   buildInputs =
     [
